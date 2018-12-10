@@ -172,6 +172,7 @@ func (c *Contract) Value() *big.Int {
 func (c *Contract) SetCallCode(addr *common.Address, hash common.Hash, code []byte) {
 	c.Code = code
 	c.CodeHash = hash
+	// 设置指令地址
 	c.CodeAddr = addr
 }
 
