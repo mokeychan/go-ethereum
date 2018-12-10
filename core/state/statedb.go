@@ -56,12 +56,13 @@ func (n *proofList) Put(key []byte, value []byte) error {
 // nested states. It's the general query interface to retrieve:
 // * Contracts
 // * Accounts
+// stateObject存储在stateDB中，stateDB存储在trie上，作为二级缓存（一级缓存为map一些结构），tire存在在db中，保存在链上。
 type StateDB struct {
 	db   Database
-	trie Trie
+	trie Trie // 所属树
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
-	stateObjects      map[common.Address]*stateObject
+	stateObjects      map[common.Address]*stateObject // 包含的stateObject
 	stateObjectsDirty map[common.Address]struct{}
 
 	// DB error.

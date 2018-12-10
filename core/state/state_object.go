@@ -60,22 +60,24 @@ func (self Storage) Copy() Storage {
 // First you need to obtain a state object.
 // Account values can be accessed and modified through the object.
 // Finally, call CommitTrie to write the modified storage trie into a database.
+// stateObject结构,stateObject是对account的抽象
 type stateObject struct {
-	address  common.Address
-	addrHash common.Hash // hash of ethereum address of the account
-	data     Account
-	db       *StateDB
+	address  common.Address // 帐户地址
+	addrHash common.Hash    // hash of ethereum address of the account 帐户地址hash
+	data     Account        // 帐户信息，struct Account
+	db       *StateDB       // 所属的stateDB
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
 	// unable to deal with database-level errors. Any error that occurs
 	// during a database read is memoized here and will eventually be returned
 	// by StateDB.Commit.
+	// VM不处理db层的错误，先记录下来，最后返回，只能保存1个错误，保存存的第一个错误
 	dbErr error
 
 	// Write caches.
-	trie Trie // storage trie, which becomes non-nil on first access
-	code Code // contract bytecode, which gets set when code is loaded
+	trie Trie // storage trie, which becomes non-nil on first access 使用trie组织stateObject的数据
+	code Code // contract bytecode, which gets set when code is loaded 合约代码
 
 	originStorage Storage // Storage cache of original entries to dedup rewrites
 	dirtyStorage  Storage // Storage entries that need to be flushed to disk
@@ -95,14 +97,16 @@ func (s *stateObject) empty() bool {
 
 // Account is the Ethereum consensus representation of accounts.
 // These objects are stored in the main account trie.
+// 帐户的结构
 type Account struct {
-	Nonce    uint64
-	Balance  *big.Int
-	Root     common.Hash // merkle root of the storage trie
-	CodeHash []byte
+	Nonce    uint64      // 帐户发起交易的次数
+	Balance  *big.Int    // 帐户的余额
+	Root     common.Hash // 存储空间的Merkle根节点hash
+	CodeHash []byte      // 合约代码的hash值(合约帐户特有)
 }
 
 // newObject creates a state object.
+// stateObject 表示一个帐户的状态，可以更新修改
 func newObject(db *StateDB, address common.Address, data Account) *stateObject {
 	if data.Balance == nil {
 		data.Balance = new(big.Int)
