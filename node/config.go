@@ -415,6 +415,7 @@ func (c *Config) AccountConfig() (int, int, string, error) {
 }
 
 func makeAccountManager(conf *Config) (*accounts.Manager, string, error) {
+	// 读取账户配置
 	scryptN, scryptP, keydir, err := conf.AccountConfig()
 	var ephemeral string
 	if keydir == "" {
@@ -426,10 +427,12 @@ func makeAccountManager(conf *Config) (*accounts.Manager, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// 最高权限创建钱包目录 默认位置是datadir/keystore
 	if err := os.MkdirAll(keydir, 0700); err != nil {
 		return nil, "", err
 	}
 	// Assemble the account manager and supported backends
+	// 初始化backend列表，创建KeyStore实例
 	backends := []accounts.Backend{
 		keystore.NewKeyStore(keydir, scryptN, scryptP),
 	}
@@ -447,6 +450,7 @@ func makeAccountManager(conf *Config) (*accounts.Manager, string, error) {
 			backends = append(backends, trezorhub)
 		}
 	}
+	// 创建账户管理器
 	return accounts.NewManager(backends...), ephemeral, nil
 }
 

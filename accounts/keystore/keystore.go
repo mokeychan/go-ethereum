@@ -99,6 +99,7 @@ func (ks *KeyStore) init(keydir string) {
 
 	// Initialize the set of unlocked keys and the account cache
 	ks.unlocked = make(map[common.Address]*unlocked)
+	// 创建账户缓存
 	ks.cache, ks.changes = newAccountCache(keydir)
 
 	// TODO: In order for this finalizer to work, there must be no references
@@ -108,6 +109,7 @@ func (ks *KeyStore) init(keydir string) {
 		m.cache.close()
 	})
 	// Create the initial list of wallets from the cache
+	// 从缓存中创建钱包的初始列表
 	accs := ks.cache.accounts()
 	ks.wallets = make([]accounts.Wallet, len(accs))
 	for i := 0; i < len(accs); i++ {

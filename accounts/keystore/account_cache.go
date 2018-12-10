@@ -86,9 +86,11 @@ func newAccountCache(keydir string) (*accountCache, chan struct{}) {
 }
 
 func (ac *accountCache) accounts() []accounts.Account {
+	// 加载账号列表
 	ac.maybeReload()
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+	// 拷贝，返回
 	cpy := make([]accounts.Account, len(ac.all))
 	copy(cpy, ac.all)
 	return cpy
@@ -194,6 +196,7 @@ func (ac *accountCache) find(a accounts.Account) (accounts.Account, error) {
 func (ac *accountCache) maybeReload() {
 	ac.mu.Lock()
 
+	// 检查有没有初始化过 用于监控datadir/keystore目录中有没有文件发生变化，如果有的话会及时刷新cache。
 	if ac.watcher.running {
 		ac.mu.Unlock()
 		return // A watcher is running and will keep the cache up-to-date.
@@ -212,6 +215,7 @@ func (ac *accountCache) maybeReload() {
 	ac.watcher.start()
 	ac.throttle.Reset(minReloadInterval)
 	ac.mu.Unlock()
+	// 如果没有watcher正在运行，就会调用scanAccount()函数手动扫描一遍获取当前账户列表。
 	ac.scanAccounts()
 }
 
