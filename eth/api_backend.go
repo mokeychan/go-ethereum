@@ -154,6 +154,7 @@ func (b *EthAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 }
 
 func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
+	// 加入交易池中
 	return b.eth.txPool.AddLocal(signedTx)
 }
 

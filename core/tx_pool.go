@@ -563,6 +563,7 @@ func (pool *TxPool) local() map[common.Address]types.Transactions {
 	return txs
 }
 
+// 加入交易池之前会进行多样的校验
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
@@ -576,6 +577,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 		return ErrNegativeValue
 	}
 	// Ensure the transaction doesn't exceed the current block limit gas.
+	// 验证区块gas限制
 	if pool.currentMaxGas < tx.Gas() {
 		return ErrGasLimit
 	}
