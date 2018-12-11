@@ -89,8 +89,10 @@ type StateDB struct {
 	nextRevisionId int
 }
 
+// 新建一个statedb
 // Create a new state from a given trie.
 func New(root common.Hash, db Database) (*StateDB, error) {
+	// 根据树根打开一棵树
 	tr, err := db.OpenTrie(root)
 	if err != nil {
 		return nil, err

@@ -38,6 +38,7 @@ const (
 	codeSizeCacheSize = 100000
 )
 
+// db相关操作
 // Database wraps access to tries and contract code.
 type Database interface {
 	// OpenTrie opens the main account trie.
@@ -89,13 +90,17 @@ func NewDatabaseWithCache(db ethdb.Database, cache int) Database {
 	}
 }
 
+// 实现Database接口，缓存常用的tire
 type cachingDB struct {
-	db            *trie.Database
-	mu            sync.Mutex
+	// 保存这棵tire的db
+	db *trie.Database
+	mu sync.Mutex
+	// 缓存过去的tire
 	pastTries     []*trie.SecureTrie
 	codeSizeCache *lru.Cache
 }
 
+// 从db中打开一个trie，如果不是最近使用过，则创建一个新的，存到db
 // OpenTrie opens the main account trie.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 	db.mu.Lock()
@@ -166,6 +171,7 @@ func (db *cachingDB) TrieDB() *trie.Database {
 }
 
 // cachedTrie inserts its trie into a cachingDB on commit.
+// 包含了trie和缓存db，trie实际是存在db中
 type cachedTrie struct {
 	*trie.SecureTrie
 	db *cachingDB

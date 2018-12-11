@@ -27,24 +27,26 @@ import (
 
 var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "[17]"}
 
+// mpt node 的数据结构
 type node interface {
-	fstring(string) string
-	cache() (hashNode, bool)
-	canUnload(cachegen, cachelimit uint16) bool
+	fstring(string) string                      // 用来打印节点信息
+	cache() (hashNode, bool)                    // 保存缓存
+	canUnload(cachegen, cachelimit uint16) bool // 除去缓存，cache次数的计数器
 }
 
+// 这里定义了四种类型的节点
 type (
 	fullNode struct {
-		Children [17]node // Actual trie node data to encode/decode (needs custom encoder)
+		Children [17]node // Actual trie node data to encode/decode (needs custom encoder) 分支节点
 		flags    nodeFlag
 	}
-	shortNode struct {
+	shortNode struct { // 扩展节点
 		Key   []byte
-		Val   node
+		Val   node // 可能指向叶子节点，也可能指向分支节点
 		flags nodeFlag
 	}
 	hashNode  []byte
-	valueNode []byte
+	valueNode []byte // 叶子节点值，但是该叶子节点最终还是会包装在shortNode中
 )
 
 // nilValueNode is used when collapsing internal trie nodes for hashing, since

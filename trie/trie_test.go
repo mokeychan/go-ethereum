@@ -49,8 +49,9 @@ func newEmpty() *Trie {
 
 func TestEmptyTrie(t *testing.T) {
 	var trie Trie
-	res := trie.Hash()
+	res := trie.Hash() // 获取当前trie的hash
 	exp := emptyRoot
+	// 判断是否是空树
 	if res != common.Hash(exp) {
 		t.Errorf("expected %x got %x", exp, res)
 	}
@@ -60,6 +61,7 @@ func TestNull(t *testing.T) {
 	var trie Trie
 	key := make([]byte, 32)
 	value := []byte("test")
+	// 创建一棵树
 	trie.Update(key, value)
 	if !bytes.Equal(trie.Get(key), value) {
 		t.Fatal("wrong value")
@@ -67,6 +69,7 @@ func TestNull(t *testing.T) {
 }
 
 func TestMissingRoot(t *testing.T) {
+	// New()中，第一个参数是将hex编码转为原始的hash 32位byte[]
 	trie, err := New(common.HexToHash("0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"), NewDatabase(ethdb.NewMemDatabase()))
 	if trie != nil {
 		t.Error("New returned non-nil trie for invalid root")
@@ -79,13 +82,15 @@ func TestMissingRoot(t *testing.T) {
 func TestMissingNodeDisk(t *testing.T)    { testMissingNode(t, false) }
 func TestMissingNodeMemonly(t *testing.T) { testMissingNode(t, true) }
 
+// 操作存储在内存或磁盘的trie
 func testMissingNode(t *testing.T, memonly bool) {
-	diskdb := ethdb.NewMemDatabase()
-	triedb := NewDatabase(diskdb)
+	diskdb := ethdb.NewMemDatabase() // 磁盘空间
+	triedb := NewDatabase(diskdb)    // 生成db
 
-	trie, _ := New(common.Hash{}, triedb)
+	trie, _ := New(common.Hash{}, triedb) // 空节点创建
 	updateString(trie, "120000", "qwerqwerqwerqwerqwerqwerqwerqwer")
 	updateString(trie, "123456", "asdfasdfasdfasdfasdfasdfasdfasdf")
+	// TODO
 	root, _ := trie.Commit(nil)
 	if !memonly {
 		triedb.Commit(root, true)

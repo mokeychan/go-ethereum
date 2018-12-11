@@ -82,8 +82,8 @@ type Header struct {
 	GasUsed     uint64         `json:"gasUsed"          gencodec:"required"` // gasUsed
 	Time        *big.Int       `json:"timestamp"        gencodec:"required"` // 区块打包时间
 	Extra       []byte         `json:"extraData"        gencodec:"required"` // 区块相关的附加信息
-	MixDigest   common.Hash    `json:"mixHash"`                              //该哈希值与Nonce值一起能够证明在该区块上已经进行了足够的计算（用于验证该区块挖矿成功与否的Hash值
-	Nonce       BlockNonce     `json:"nonce"`                                //该哈希值与MixDigest值一起能够证明在该区块上已经进行了足够的计算（用于验证该区块挖矿成功与否的Hash值
+	MixDigest   common.Hash    `json:"mixHash"`                              // 该哈希值与Nonce值一起能够证明在该区块上已经进行了足够的计算（用于验证该区块挖矿成功与否的Hash值
+	Nonce       BlockNonce     `json:"nonce"`                                // 该哈希值与MixDigest值一起能够证明在该区块上已经进行了足够的计算（用于验证该区块挖矿成功与否的Hash值
 }
 
 // field type overrides for gencodec
@@ -118,9 +118,10 @@ func rlpHash(x interface{}) (h common.Hash) {
 
 // Body is a simple (mutable, non-safe) data container for storing and moving
 // a block's data contents (transactions and uncles) together.
+// 区块体的结构
 type Body struct {
-	Transactions []*Transaction
-	Uncles       []*Header
+	Transactions []*Transaction // 交易的数组
+	Uncles       []*Header      // 叔块数组
 }
 
 // Block represents an entire block in the Ethereum blockchain.
@@ -128,7 +129,7 @@ type Body struct {
 type Block struct {
 	header       *Header      // 包含的区块头信息
 	uncles       []*Header    // 包含的叔区块信息
-	transactions Transactions // 包含的交易信息
+	transactions Transactions // 包含的交易数组
 
 	// caches
 	hash atomic.Value // 区块的hash缓存

@@ -64,15 +64,17 @@ type LeafCallback func(leaf []byte, parent common.Hash) error
 // Use New to create a trie that sits on top of a database.
 //
 // Trie is not safe for concurrent use.
+// 树的结构
 type Trie struct {
-	db   *Database
-	root node
+	// trie中存入db本身的是各种类型的node，也就是从root指向的那个node开始存储，root本身并不存储。
+	db   *Database // 与db关联
+	root node      // 根节点
 
 	// Cache generation values.
 	// cachegen increases by one with each commit operation.
 	// new nodes are tagged with the current generation and unloaded
 	// when their generation is older than than cachegen-cachelimit.
-	cachegen, cachelimit uint16
+	cachegen, cachelimit uint16 // cache次数的计数器，每次Trie的变动提交后自增
 }
 
 // SetCacheLimit sets the number of 'cache generations' to keep.
@@ -100,11 +102,11 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 		db: db,
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
-		rootnode, err := trie.resolveHash(root[:], nil)
+		rootnode, err := trie.resolveHash(root[:], nil) // 检查是否有对应的trie
 		if err != nil {
 			return nil, err
 		}
-		trie.root = rootnode
+		trie.root = rootnode // 返回了找到的trie，这个rootnode应该是分支节点或叶子节点
 	}
 	return trie, nil
 }
@@ -428,7 +430,7 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 }
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	cacheMissCounter.Inc(1)
+	cacheMissCounter.Inc(1) // 每执行一次resolveHash()方法，计数器+1.不论从db中还原trie成功还是失败，计数器都会累加1
 
 	hash := common.BytesToHash(n)
 	if node := t.db.node(hash, t.cachegen); node != nil {
