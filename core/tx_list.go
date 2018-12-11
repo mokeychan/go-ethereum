@@ -50,8 +50,8 @@ func (h *nonceHeap) Pop() interface{} {
 // txSortedMap is a nonce->transaction hash map with a heap based index to allow
 // iterating over the contents in a nonce-incrementing way.
 type txSortedMap struct {
-	items map[uint64]*types.Transaction // Hash map storing the transaction data
-	index *nonceHeap                    // Heap of nonces of all the stored transactions (non-strict mode)
+	items map[uint64]*types.Transaction // Hash map storing the transaction data key是nonce值，越新的交易，nonce值越大、
+	index *nonceHeap                    // Heap of nonces of all the stored transactions (non-strict mode) 数组，包含了所有的nonce值，内部是一个小顶堆，nonce值从大到小排列，每次调用heap.Pop()时，会取出最老的交易、
 	cache types.Transactions            // Cache of the transactions already sorted
 }
 
@@ -221,7 +221,7 @@ func (m *txSortedMap) Flatten() types.Transactions {
 // executable/future queue, with minor behavioral changes.
 type txList struct {
 	strict bool         // Whether nonces are strictly continuous or not
-	txs    *txSortedMap // Heap indexed sorted hash map of the transactions
+	txs    *txSortedMap // Heap indexed sorted hash map of the transactions // 按照nonce排序
 
 	costcap *big.Int // Price of the highest costing transaction (reset only if exceeds balance)
 	gascap  uint64   // Gas limit of the highest spending transaction (reset only if exceeds block limit)

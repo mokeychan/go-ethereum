@@ -48,7 +48,6 @@ var txPermanent = uint64(500)
 // in a block (mined) or rolled back. There are no queued transactions since we
 // always receive all locally signed transactions in the same order as they are
 // created.
-// 交易池的结构
 type TxPool struct {
 	config       *params.ChainConfig
 	signer       types.Signer

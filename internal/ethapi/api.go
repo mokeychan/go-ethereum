@@ -1251,6 +1251,7 @@ func (args *SendTxArgs) toTransaction() *types.Transaction {
 }
 
 // submitTransaction is a helper function that submits tx to txPool and logs a message.
+// 提交交易到交易池中
 func submitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (common.Hash, error) {
 	// 交易校验
 	if err := b.SendTx(ctx, tx); err != nil {
