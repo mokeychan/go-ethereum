@@ -218,6 +218,7 @@ func (tx *Transaction) Size() common.StorageSize {
 //
 // XXX Rename message to something less arbitrary?
 func (tx *Transaction) AsMessage(s Signer) (Message, error) {
+	// 通过交易data数据拼接Message对象
 	msg := Message{
 		nonce:      tx.data.AccountNonce,
 		gasLimit:   tx.data.GasLimit,
@@ -229,6 +230,8 @@ func (tx *Transaction) AsMessage(s Signer) (Message, error) {
 	}
 
 	var err error
+	// 通过签名方法，解密得到这个交易的签名公钥（也是就是发送方的地址）
+	// 这里这样做的原因：发送方的地址在交易数据中是没有的，这主要是为了防止交易数据被篡改，任何交易数据的变化后通过signer.Sender方法都不能得到正确的地址。
 	msg.from, err = Sender(s, tx)
 	return msg, err
 }

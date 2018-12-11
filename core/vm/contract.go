@@ -61,6 +61,7 @@ type Contract struct {
 	value *big.Int
 }
 
+// 创建合约对象
 // NewContract returns a new contract environment for the execution of EVM.
 func NewContract(caller ContractRef, object ContractRef, value *big.Int, gas uint64) *Contract {
 	c := &Contract{CallerAddress: caller.Address(), caller: caller, self: object}
