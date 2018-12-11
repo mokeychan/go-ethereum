@@ -1189,6 +1189,7 @@ type SendTxArgs struct {
 	Nonce    *hexutil.Uint64 `json:"nonce"`
 	// We accept "data" and "input" for backwards-compatibility reasons. "input" is the
 	// newer name and should be preferred by clients.
+	// data/input 可以携带额外的数据，推荐input，因为data是向后兼容的
 	Data  *hexutil.Bytes `json:"data"`
 	Input *hexutil.Bytes `json:"input"`
 }
@@ -1234,6 +1235,7 @@ func (args *SendTxArgs) setDefaults(ctx context.Context, b Backend) error {
 	return nil
 }
 
+// 最终返回一个交易的实例
 func (args *SendTxArgs) toTransaction() *types.Transaction {
 	var input []byte
 	if args.Data != nil {
@@ -1270,13 +1272,14 @@ func submitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 
 // SendTransaction creates a transaction for the given argument, sign it and submit it to the
 // transaction pool.
-// 发送交易的API
+// 暴露的发送交易的接口
 func (s *PublicTransactionPoolAPI) SendTransaction(ctx context.Context, args SendTxArgs) (common.Hash, error) {
 
 	// Look up the wallet containing the requested signer
+	// 根据from地址找到对应的账户
 	account := accounts.Account{Address: args.From}
 
-	// 从账户管理器中查询该账户
+	// 从账户管理器中查询该账户的钱包
 	wallet, err := s.b.AccountManager().Find(account)
 	if err != nil {
 		return common.Hash{}, err
@@ -1296,18 +1299,20 @@ func (s *PublicTransactionPoolAPI) SendTransaction(ctx context.Context, args Sen
 	}
 
 	// Assemble the transaction and sign with the wallet
-	// 获取交易实例
+	// 创建交易
 	tx := args.toTransaction()
 
+	// 判断是否为EIP155分叉的情况
 	var chainID *big.Int
 	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number()) {
 		chainID = config.ChainID
 	}
-	// 签名交易
+	// 签名交易（同时生成交易的hash）
 	signed, err := wallet.SignTx(account, tx, chainID)
 	if err != nil {
 		return common.Hash{}, err
 	}
+	// 提交交易
 	return submitTransaction(ctx, s.b, signed)
 }
 

@@ -54,11 +54,14 @@ func MakeSigner(config *params.ChainConfig, blockNumber *big.Int) Signer {
 
 // SignTx signs the transaction using the given signer and private key
 func SignTx(tx *Transaction, s Signer, prv *ecdsa.PrivateKey) (*Transaction, error) {
+	// 生成交易的hash
 	h := s.Hash(tx)
+	// 根据hash值和私钥生成签名
 	sig, err := crypto.Sign(h[:], prv)
 	if err != nil {
 		return nil, err
 	}
+	// 把签名数据填充到Transaction实例中
 	return tx.WithSignature(s, sig)
 }
 
@@ -151,7 +154,8 @@ func (s EIP155Signer) SignatureValues(tx *Transaction, sig []byte) (R, S, V *big
 }
 
 // Hash returns the hash to be signed by the sender.
-// It does not uniquely identify the transaction.
+// It does not uniquely identify the transaction.\
+// 生成交易hash的方法
 func (s EIP155Signer) Hash(tx *Transaction) common.Hash {
 	return rlpHash([]interface{}{
 		tx.data.AccountNonce,
@@ -196,9 +200,10 @@ func (fs FrontierSigner) SignatureValues(tx *Transaction, sig []byte) (r, s, v *
 	if len(sig) != 65 {
 		panic(fmt.Sprintf("wrong size for signature: got %d, want 65", len(sig)))
 	}
-	r = new(big.Int).SetBytes(sig[:32])
-	s = new(big.Int).SetBytes(sig[32:64])
-	v = new(big.Int).SetBytes([]byte{sig[64] + 27})
+	// 分段签名来作为txdata的r,s,v字段
+	r = new(big.Int).SetBytes(sig[:32])             // [0]-[31]
+	s = new(big.Int).SetBytes(sig[32:64])           // [32]-[63]
+	v = new(big.Int).SetBytes([]byte{sig[64] + 27}) //[64]+27
 	return r, s, v, nil
 }
 
