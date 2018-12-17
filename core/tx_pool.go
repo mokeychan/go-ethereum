@@ -630,7 +630,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 // If a newly added transaction is marked as local, its sending account will be
 // whitelisted, preventing any associated transaction from being dropped out of
 // the pool due to pricing constraints.
-// 将交易放入tx_pool，先放入queue
+// 将交易放入tx_pool，先放入queue队列
 func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 	// If the transaction is already known, discard it
 	// 判断是否已经在tx_pool中了，在的话直接退出

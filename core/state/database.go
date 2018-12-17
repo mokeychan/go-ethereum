@@ -38,21 +38,26 @@ const (
 	codeSizeCacheSize = 100000
 )
 
-// db相关操作
+// 主要提供了trie树的抽象，提供trie树的缓存和合约代码长度的缓存。
 // Database wraps access to tries and contract code.
 type Database interface {
-	// OpenTrie opens the main account trie.
+	// OpenTrie opens the main account trie.、
+	// 打开了主账号的trie树
 	OpenTrie(root common.Hash) (Trie, error)
 
 	// OpenStorageTrie opens the storage trie of an account.
+	// 打开了一个账号的storage trie
 	OpenStorageTrie(addrHash, root common.Hash) (Trie, error)
 
 	// CopyTrie returns an independent copy of the given trie.
+	// 返回了一个指定trie的独立的copy
 	CopyTrie(Trie) Trie
 
 	// ContractCode retrieves a particular contract's code.
+	// 访问合约代码
 	ContractCode(addrHash, codeHash common.Hash) ([]byte, error)
 
+	// 访问合约的大小。 这个方法可能经常被调用。因为有缓存。
 	// ContractCodeSize retrieves a particular contracts code's size.
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 
@@ -100,7 +105,7 @@ type cachingDB struct {
 	codeSizeCache *lru.Cache
 }
 
-// 从db中打开一个trie，如果不是最近使用过，则创建一个新的，存到db
+// 从缓存里面查找。如果找到了返回缓存的trie的copy， 否则重新构建一颗树返回。
 // OpenTrie opens the main account trie.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 	db.mu.Lock()
