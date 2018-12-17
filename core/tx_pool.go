@@ -124,19 +124,19 @@ type blockChain interface {
 // TxPoolConfig are the configuration parameters of the transaction pool.
 type TxPoolConfig struct {
 	Locals    []common.Address // Addresses that should be treated by default as local
-	NoLocals  bool             // Whether local transaction handling should be disabled
-	Journal   string           // Journal of local transactions to survive node restarts
-	Rejournal time.Duration    // Time interval to regenerate the local transaction journal
+	NoLocals  bool             // Whether local transaction handling should be disabled 为本地提交交易禁用价格豁免
+	Journal   string           // Journal of local transactions to survive node restarts 本地交易的磁盘日志：用于节点重启 (默认: "transactions.rlp")
+	Rejournal time.Duration    // Time interval to regenerate the local transaction journal 重新生成本地交易日志的时间间隔 (默认: 1小时)
 
-	PriceLimit uint64 // Minimum gas price to enforce for acceptance into the pool
-	PriceBump  uint64 // Minimum price bump percentage to replace an already existing transaction (nonce)
+	PriceLimit uint64 // Minimum gas price to enforce for acceptance into the pool 加入交易池的最小的gas价格限制(默认: 1)
+	PriceBump  uint64 // Minimum price bump percentage to replace an already existing transaction (nonce) 价格波动百分比（相对之前已有交易） (默认: 10)
 
-	AccountSlots uint64 // Number of executable transaction slots guaranteed per account
-	GlobalSlots  uint64 // Maximum number of executable transaction slots for all accounts
-	AccountQueue uint64 // Maximum number of non-executable transaction slots permitted per account
-	GlobalQueue  uint64 // Maximum number of non-executable transaction slots for all accounts
+	AccountSlots uint64 // Number of executable transaction slots guaranteed per account 每个帐户保证可执行的最少交易槽数量  (默认: 16)
+	GlobalSlots  uint64 // Maximum number of executable transaction slots for all accounts 所有帐户可执行的最大交易槽数量 (默认: 4096)
+	AccountQueue uint64 // Maximum number of non-executable transaction slots permitted per account 每个帐户允许的最多非可执行交易槽数量 (默认: 64)
+	GlobalQueue  uint64 // Maximum number of non-executable transaction slots for all accounts 所有帐户非可执行交易最大槽数量  (默认: 1024)
 
-	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
+	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued 非可执行交易最大入队时间(默认: 3小时)
 }
 
 // DefaultTxPoolConfig contains the default configurations for the transaction
@@ -147,7 +147,7 @@ var DefaultTxPoolConfig = TxPoolConfig{
 	Rejournal: time.Hour,
 
 	PriceLimit: 1,  // 允许进入txpool的最低gas price，默认1 Gwei
-	PriceBump:  10, // 如果出现两个nonce相同的交易，gas price的差值超过该阀值则用新交易替换老交易
+	PriceBump:  10, // 阀值，如果出现两个nonce相同的交易，gas price的差值只有超过该阀值则用新交易替换老交易
 
 	AccountSlots: 16,   // pending中每个账户存储的交易数的阀值，超过这个数量可能会被认为是垃圾交易或者是攻击者，多余交易可能被丢弃
 	GlobalSlots:  4096, // pending列表中的最大容量为4096
@@ -189,11 +189,11 @@ type TxPool struct {
 	chainconfig  *params.ChainConfig
 	chain        blockChain
 	gasPrice     *big.Int
-	txFeed       event.Feed
+	txFeed       event.Feed // 通过txFeed来订阅tx_pool消息
 	scope        event.SubscriptionScope
-	chainHeadCh  chan ChainHeadEvent
-	chainHeadSub event.Subscription
-	signer       types.Signer
+	chainHeadCh  chan ChainHeadEvent // 订阅了区块头的信息，当有新的区块头生成的时候会在这里收到通知
+	chainHeadSub event.Subscription  // 区块头信息订阅器
+	signer       types.Signer        // 封装了事务签名处理
 	mu           sync.RWMutex
 
 	currentState  *state.StateDB      // Current state in the blockchain head
@@ -201,9 +201,9 @@ type TxPool struct {
 	currentMaxGas uint64              // Current gas limit for transaction caps
 
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
-	journal *txJournal  // Journal of local transaction to back up to disk
+	journal *txJournal  // Journal of local transaction to back up to disk 本地交易日志备份到磁盘
 
-	pending map[common.Address]*txList   // All currently processable transactions 等待的交易队列（可被处理）
+	pending map[common.Address]*txList   // All currently processable transactions 等待的交易队列（可被处理的交易）
 	queue   map[common.Address]*txList   // Queued but non-processable transactions 当前不可被处理，新加入进来的交易
 	beats   map[common.Address]time.Time // Last heartbeat from each known account
 	all     *txLookup                    // All transactions to allow lookups // 所有的交易列表，以交易的hash作为key。
@@ -670,6 +670,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 	from, _ := types.Sender(pool.signer, tx) // already validated
 	// 如果用户发起了一笔交易还没有并执行，又发送了一笔nonce相同的交易，则保留gasprice高的那笔交易。
 	// list.Overlaps()函数就是用来判断pending列表中是否包含相同nonce的交易
+	// 获取pending队列中发起者的交易列表，并判断该笔交易的nonce是否存在
 	if list := pool.pending[from]; list != nil && list.Overlaps(tx) {
 		// Nonce already pending, check if required price bump is met
 		inserted, old := list.Add(tx, pool.config.PriceBump)
@@ -683,13 +684,14 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 			pool.priced.Removed()
 			pendingReplaceCounter.Inc(1)
 		}
-		pool.all.Add(tx)
-		pool.priced.Put(tx)
-		pool.journalTx(from, tx)
+		pool.all.Add(tx)         // 放入交易列表
+		pool.priced.Put(tx)      // 放入排序好(gasPrice低，nonce小)的列表
+		pool.journalTx(from, tx) // (是否)放入本地交易日志
 
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
 
 		// We've directly injected a replacement transaction, notify subsystems
+		//
 		go pool.txFeed.Send(NewTxsEvent{types.Transactions{tx}})
 
 		return old != nil, nil
@@ -709,7 +711,6 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 		}
 	}
 	pool.journalTx(from, tx)
-
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
 	return replace, nil
 }
@@ -744,11 +745,14 @@ func (pool *TxPool) enqueueTx(hash common.Hash, tx *types.Transaction) (bool, er
 
 // journalTx adds the specified transaction to the local disk journal if it is
 // deemed to have been sent from a local account.
+// journalTx将指定的事务添加到本地磁盘日志中（如果是）
+// 视为已从本地帐户发送。
 func (pool *TxPool) journalTx(from common.Address, tx *types.Transaction) {
 	// Only journal if it's enabled and the transaction is local
 	if pool.journal == nil || !pool.locals.contains(from) {
 		return
 	}
+	// 将交易写入日志
 	if err := pool.journal.insert(tx); err != nil {
 		log.Warn("Failed to journal local transaction", "err", err)
 	}

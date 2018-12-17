@@ -27,21 +27,24 @@ var errBadChannel = errors.New("event: Subscribe argument does not have sendable
 // Feed implements one-to-many subscriptions where the carrier of events is a channel.
 // Values sent to a Feed are delivered to all subscribed channels simultaneously.
 //
+// Feed 实现了 1对多的订阅模式，使用了channel来传递事件。 发送给Feed的值会同时被传递给所有订阅的channel。
+// Feed 是一个流式事件框架，与其他模块没有耦合。订阅者采用有缓存的通道，Feed就是异步的;采用无缓存的通道，Feed就是同步的。由消息的订阅者决定。
 // Feeds can only be used with a single type. The type is determined by the first Send or
 // Subscribe operation. Subsequent calls to these methods panic if the type does not
 // match.
 //
+// Feed只能被单个类型使用。这个和之前的event不同，event可以使用多个类型。 类型被第一个Send调用或者是Subscribe调用决定。 后续的调用如果类型和其不一致会panic
 // The zero value is ready to use.
 type Feed struct {
-	once      sync.Once        // ensures that init only runs once
+	once      sync.Once        // ensures that init only runs once 保证初始化只被执行一次
 	sendLock  chan struct{}    // sendLock has a one-element buffer and is empty when held.It protects sendCases.
-	removeSub chan interface{} // interrupts Send
+	removeSub chan interface{} // interrupts Send 取消订阅
 	sendCases caseList         // the active set of select cases used by Send
 
 	// The inbox holds newly subscribed channels until they are added to sendCases.
 	mu     sync.Mutex
-	inbox  caseList
-	etype  reflect.Type
+	inbox  caseList     // 事件列表
+	etype  reflect.Type // 事件类型
 	closed bool
 }
 
@@ -58,6 +61,7 @@ func (e feedTypeError) Error() string {
 	return "event: wrong type in " + e.op + " got " + e.got.String() + ", want " + e.want.String()
 }
 
+// 初始化 初始化会被once来保护保证只会被执行一次。
 func (f *Feed) init() {
 	f.removeSub = make(chan interface{})
 	f.sendLock = make(chan struct{}, 1)
@@ -70,14 +74,18 @@ func (f *Feed) init() {
 //
 // The channel should have ample buffer space to avoid blocking other subscribers.
 // Slow subscribers are not dropped.
+// 订阅和取消订阅
+// 根据传入的channel生成了SelectCase，放入inbox。
 func (f *Feed) Subscribe(channel interface{}) Subscription {
 	f.once.Do(f.init)
 
 	chanval := reflect.ValueOf(channel)
 	chantyp := chanval.Type()
+	// 如果类型不是channel 或者是 channel的方向不能发送数据，那么错误退出。
 	if chantyp.Kind() != reflect.Chan || chantyp.ChanDir()&reflect.SendDir == 0 {
 		panic(errBadChannel)
 	}
+	// 组装feedSub
 	sub := &feedSub{feed: f, channel: chanval, err: make(chan error, 1)}
 
 	f.mu.Lock()
@@ -126,6 +134,7 @@ func (f *Feed) remove(sub *feedSub) {
 
 // Send delivers to all subscribed channels simultaneously.
 // It returns the number of subscribers that the value was sent to.
+// 发布事件和传递事件
 func (f *Feed) Send(value interface{}) (nsent int) {
 	rvalue := reflect.ValueOf(value)
 
@@ -189,9 +198,10 @@ func (f *Feed) Send(value interface{}) (nsent int) {
 	return nsent
 }
 
+// 订阅Feed的结构
 type feedSub struct {
-	feed    *Feed
-	channel reflect.Value
+	feed    *Feed         // 基础Feed
+	channel reflect.Value // channel
 	errOnce sync.Once
 	err     chan error
 }

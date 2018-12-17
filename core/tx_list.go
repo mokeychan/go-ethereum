@@ -240,6 +240,7 @@ func newTxList(strict bool) *txList {
 // Overlaps returns whether the transaction specified has the same nonce as one
 // already contained within the list.
 func (l *txList) Overlaps(tx *types.Transaction) bool {
+	// 判断tx.nonce是否已经存在
 	return l.txs.Get(tx.Nonce()) != nil
 }
 
