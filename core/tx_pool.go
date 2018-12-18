@@ -630,7 +630,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 // If a newly added transaction is marked as local, its sending account will be
 // whitelisted, preventing any associated transaction from being dropped out of
 // the pool due to pricing constraints.
-// 将交易放入tx_pool，先放入queue队列
+// 将交易放入tx_pool
 func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 	// If the transaction is already known, discard it
 	// 判断是否已经在tx_pool中了，在的话直接退出
@@ -671,6 +671,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 	// 如果用户发起了一笔交易还没有并执行，又发送了一笔nonce相同的交易，则保留gasprice高的那笔交易。
 	// list.Overlaps()函数就是用来判断pending列表中是否包含相同nonce的交易
 	// 获取pending队列中发起者的交易列表，并判断该笔交易的nonce是否存在
+	// pending
 	if list := pool.pending[from]; list != nil && list.Overlaps(tx) {
 		// Nonce already pending, check if required price bump is met
 		inserted, old := list.Add(tx, pool.config.PriceBump)
@@ -691,7 +692,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
 
 		// We've directly injected a replacement transaction, notify subsystems
-		//
+		// 发布事件(feed.Send(txs []transaction))
 		go pool.txFeed.Send(NewTxsEvent{types.Transactions{tx}})
 
 		return old != nil, nil

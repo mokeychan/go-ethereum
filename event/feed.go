@@ -32,18 +32,18 @@ var errBadChannel = errors.New("event: Subscribe argument does not have sendable
 // Feeds can only be used with a single type. The type is determined by the first Send or
 // Subscribe operation. Subsequent calls to these methods panic if the type does not
 // match.
-//
+// 每种事件类型都有一个自己的feed，一个feed内订阅的是同一种类型（同一种类型、同一种类型!）的事件，得用某个事件的feed才能订阅该事件
 // Feed只能被单个类型使用。这个和之前的event不同，event可以使用多个类型。 类型被第一个Send调用或者是Subscribe调用决定。 后续的调用如果类型和其不一致会panic
 // The zero value is ready to use.
 type Feed struct {
 	once      sync.Once        // ensures that init only runs once 保证初始化只被执行一次
-	sendLock  chan struct{}    // sendLock has a one-element buffer and is empty when held.It protects sendCases.
+	sendLock  chan struct{}    // sendLock has a one-element buffer and is empty when held.It protects sendCases. 这个锁确保了只有一个协程在使用go routine
 	removeSub chan interface{} // interrupts Send 取消订阅
-	sendCases caseList         // the active set of select cases used by Send
+	sendCases caseList         // the active set of select cases used by Send 发送方的有效case集(订阅的channel列表，这些channel是活跃的)
 
 	// The inbox holds newly subscribed channels until they are added to sendCases.
 	mu     sync.Mutex
-	inbox  caseList     // 事件列表
+	inbox  caseList     // 事件列表 selectCase list 不活跃的在这里
 	etype  reflect.Type // 事件类型
 	closed bool
 }
@@ -74,8 +74,7 @@ func (f *Feed) init() {
 //
 // The channel should have ample buffer space to avoid blocking other subscribers.
 // Slow subscribers are not dropped.
-// 订阅和取消订阅
-// 根据传入的channel生成了SelectCase，放入inbox。
+// 订阅的方法
 func (f *Feed) Subscribe(channel interface{}) Subscription {
 	f.once.Do(f.init)
 
@@ -90,11 +89,16 @@ func (f *Feed) Subscribe(channel interface{}) Subscription {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// 只要chan中的event类型与feed不一致，就会panic
 	if !f.typecheck(chantyp.Elem()) {
 		panic(feedTypeError{op: "Subscribe", got: chantyp, want: reflect.ChanOf(reflect.SendDir, f.etype)})
 	}
+
+	// 把通道保存到case
 	// Add the select case to the inbox.
 	// The next Send will add it to f.sendCases.
+	// 根据传入的channel生成了SelectCase，放入inbox
+	// 指定了case的发送方向和使用的channel
 	cas := reflect.SelectCase{Dir: reflect.SelectSend, Chan: chanval}
 	f.inbox = append(f.inbox, cas)
 	return sub
@@ -134,25 +138,32 @@ func (f *Feed) remove(sub *feedSub) {
 
 // Send delivers to all subscribed channels simultaneously.
 // It returns the number of subscribers that the value was sent to.
-// 发布事件和传递事件
+// 发布事件的方法
+// 同时向所有的订阅者发送事件，返回订阅者的数量
+// pending队列中的事件，通知订阅者
+// 返回值为消息接收这数量(订阅者数量)
 func (f *Feed) Send(value interface{}) (nsent int) {
 	rvalue := reflect.ValueOf(value)
 
 	f.once.Do(f.init)
-	<-f.sendLock
+	<-f.sendLock // 获取发送锁
 
 	// Add new cases from the inbox after taking the send lock.
+	// 从inbox加入到sendCases，不能订阅的时候直接加入到sendCases，因为可能其他协程在调用发送
 	f.mu.Lock()
 	f.sendCases = append(f.sendCases, f.inbox...)
 	f.inbox = nil
 
+	// 类型检查：如果该feed不是要发送的值的类型，释放锁，并且执行panic
+	// 只要chan中的event类型与feed.etype不一致，就会panic
 	if !f.typecheck(rvalue.Type()) {
-		f.sendLock <- struct{}{}
+		f.sendLock <- struct{}{} // 释放锁
 		panic(feedTypeError{op: "Send", got: rvalue.Type(), want: f.etype})
 	}
 	f.mu.Unlock()
 
 	// Set the sent value on all channels.
+	// 向feed中的每个case/channel发送消息
 	for i := firstSubSendCase; i < len(f.sendCases); i++ {
 		f.sendCases[i].Send = rvalue
 	}
@@ -160,24 +171,32 @@ func (f *Feed) Send(value interface{}) (nsent int) {
 	// Send until all channels except removeSub have been chosen. 'cases' tracks a prefix
 	// of sendCases. When a send succeeds, the corresponding case moves to the end of
 	// 'cases' and it shrinks by one element.
+	// 所有case仍然保留在sendCases，只是用过的会移动到最后面
 	cases := f.sendCases
 	for {
 		// Fast path: try sending without blocking before adding to the select set.
 		// This should usually succeed if subscribers are fast enough and have free
 		// buffer space.
+		// 使用非阻塞式发送，如果不能发送就及时返回
 		for i := firstSubSendCase; i < len(cases); i++ {
+			// 先尝试着向每个case的chan中去发送数据, 如果不能发送就及时返回
 			if cases[i].Chan.TrySend(rvalue) {
-				nsent++
+				// 如果发送成功
+				nsent++ // 订阅者数量增加
+				// 把这个case移动到末尾，所以i这个位置就是没处理过的，然后大小减1
 				cases = cases.deactivate(i)
 				i--
 			}
 		}
+		// 如果这个地方成立，代表所有订阅者都不阻塞，都发送完毕
 		if len(cases) == firstSubSendCase {
 			break
 		}
 		// Select on all the receivers, waiting for them to unblock.
+		// 返回一个可用的，直到不阻塞。
 		chosen, recv, _ := reflect.Select(cases)
 		if chosen == 0 /* <-f.removeSub */ {
+			// 这个接收方要删除了，删除并缩小sendCases
 			index := f.sendCases.find(recv.Interface())
 			f.sendCases = f.sendCases.delete(index)
 			if index >= 0 && index < len(cases) {
@@ -185,11 +204,13 @@ func (f *Feed) Send(value interface{}) (nsent int) {
 				cases = f.sendCases[:len(cases)-1]
 			}
 		} else {
+			// reflect已经确保数据已经发送，无需再尝试发送
 			cases = cases.deactivate(chosen)
 			nsent++
 		}
 	}
 
+	// 把sendCases中的send都标记为空
 	// Forget about the sent value and hand off the send lock.
 	for i := firstSubSendCase; i < len(f.sendCases); i++ {
 		f.sendCases[i].Send = reflect.Value{}
@@ -235,6 +256,7 @@ func (cs caseList) delete(index int) caseList {
 }
 
 // deactivate moves the case at index into the non-accessible portion of the cs slice.
+// 移动到末尾，数组长度递减
 func (cs caseList) deactivate(index int) caseList {
 	last := len(cs) - 1
 	cs[index], cs[last] = cs[last], cs[index]
