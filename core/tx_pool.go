@@ -184,6 +184,7 @@ func (config *TxPoolConfig) sanitize() TxPoolConfig {
 // current state) and future transactions. Transactions move between those
 // two states over time as they are received and processed.
 // 交易池的结构
+// 分析以太坊交易池内部交易状态转换与事件通知.md
 type TxPool struct {
 	config       TxPoolConfig
 	chainconfig  *params.ChainConfig
@@ -203,8 +204,8 @@ type TxPool struct {
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *txJournal  // Journal of local transaction to back up to disk 本地交易日志备份到磁盘
 
-	pending map[common.Address]*txList   // All currently processable transactions 等待的交易队列（可被处理的交易）
-	queue   map[common.Address]*txList   // Queued but non-processable transactions 当前不可被处理，新加入进来的交易
+	pending map[common.Address]*txList   // All currently processable transactions 可被处理的交易
+	queue   map[common.Address]*txList   // Queued but non-processable transactions 当前不可被处理（存放未来的、当前无法执行的交易)
 	beats   map[common.Address]time.Time // Last heartbeat from each known account
 	all     *txLookup                    // All transactions to allow lookups // 所有的交易列表，以交易的hash作为key。
 	priced  *txPricedList                // All transactions sorted by price // 把all中的交易列表按照gas price从大到小排列，如果gas price一样，则按照交易的nonce值从小到大排列。最终的目标是每次取出gas price最大、nonce最小的交易。
