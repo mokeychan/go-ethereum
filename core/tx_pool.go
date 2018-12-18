@@ -630,7 +630,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 // If a newly added transaction is marked as local, its sending account will be
 // whitelisted, preventing any associated transaction from being dropped out of
 // the pool due to pricing constraints.
-// 将交易放入tx_pool
+// 将交易放入tx_pool，新的交易是先放入queue队列中的。
 func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 	// If the transaction is already known, discard it
 	// 判断是否已经在tx_pool中了，在的话直接退出
@@ -692,15 +692,16 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
 
 		// We've directly injected a replacement transaction, notify subsystems
-		// 发布事件(feed.Send(txs []transaction))
+		// 启用一个协程，发布事件(feed.Send(txs []transaction))
 		go pool.txFeed.Send(NewTxsEvent{types.Transactions{tx}})
 
 		return old != nil, nil
 	}
 	// New transaction isn't replacing a pending one, push into queue
-	// 将交易放入queue队列
+	// 将交易放入queue队列，返回值replace bool表示是否替换older tx.
 	replace, err := pool.enqueueTx(hash, tx)
 	if err != nil {
+		// queue队列中旧的交易更好，就返回false.
 		return false, err
 	}
 	// Mark local addresses and journal local transactions
@@ -711,7 +712,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 			pool.locals.add(from)
 		}
 	}
-	pool.journalTx(from, tx)
+	pool.journalTx(from, tx) // (是否)放入本地交易日志
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
 	return replace, nil
 }
@@ -719,24 +720,31 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 // enqueueTx inserts a new transaction into the non-executable transaction queue.
 //
 // Note, this method assumes the pool lock is held!
+// 将新的交易放入queue队列，返回bool
 func (pool *TxPool) enqueueTx(hash common.Hash, tx *types.Transaction) (bool, error) {
 	// Try to insert the transaction into the future queue
+	// 尝试将事务插入到将来的队列中
 	from, _ := types.Sender(pool.signer, tx) // already validated
 	if pool.queue[from] == nil {
+		// 放入queue队列中
 		pool.queue[from] = newTxList(false)
 	}
+	// 替换交易费较低的交易
 	inserted, old := pool.queue[from].Add(tx, pool.config.PriceBump)
 	if !inserted {
 		// An older transaction was better, discard this
-		queuedDiscardCounter.Inc(1)
+		// 旧的交易更好一些，丢弃这个newer交易
+		queuedDiscardCounter.Inc(1) // queue队列的删除计数器记录1
 		return false, ErrReplaceUnderpriced
 	}
+	// 由于有新的交易覆盖了old, 所以现在要remove old 交易
 	// Discard any previous transaction and mark this
 	if old != nil {
-		pool.all.Remove(old.Hash())
-		pool.priced.Removed()
-		queuedReplaceCounter.Inc(1)
+		pool.all.Remove(old.Hash()) // 从tx_pool列表中移除
+		pool.priced.Removed() // 从排序的列表中移除
+		queuedReplaceCounter.Inc(1) // queue队列的替换计数器记录1
 	}
+	// 将上面的newer tx 放入池中
 	if pool.all.Get(hash) == nil {
 		pool.all.Add(tx)
 		pool.priced.Put(tx)
@@ -763,7 +771,8 @@ func (pool *TxPool) journalTx(from common.Address, tx *types.Transaction) {
 // and returns whether it was inserted or an older was better.
 //
 // Note, this method assumes the pool lock is held!
-// 广播消息
+// 将交易放入pending队列，返回bool
+// 与enqueueTx()方法类似
 func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.Transaction) bool {
 	// Try to insert the transaction into the pending queue
 	if pool.pending[addr] == nil {
@@ -771,9 +780,11 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 	}
 	list := pool.pending[addr]
 
+	// 和之前的enqueueTx方法一样，判断能否替换队列中older tx
 	inserted, old := list.Add(tx, pool.config.PriceBump)
 	if !inserted {
 		// An older transaction was better, discard this
+		// older is better!
 		pool.all.Remove(hash)
 		pool.priced.Removed()
 
@@ -781,6 +792,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 		return false
 	}
 	// Otherwise discard any previous transaction and mark this
+	// new tx is better, i will delete old tx!
 	if old != nil {
 		pool.all.Remove(old.Hash())
 		pool.priced.Removed()
@@ -793,7 +805,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 		pool.priced.Put(tx)
 	}
 	// Set the potentially new pending nonce and notify any subsystems of the new
-	// 更新心跳时间、账户的nonce值
+	// 更新心跳时间、账户的nonce值+1
 	pool.beats[addr] = time.Now()
 	pool.pendingState.SetNonce(addr, tx.Nonce()+1)
 
@@ -835,16 +847,14 @@ func (pool *TxPool) addTx(tx *types.Transaction, local bool) error {
 	defer pool.mu.Unlock()
 
 	// Try to inject the transaction and update any state
-	// 判断是否应该把当前交易加入到queue列表中
 	replace, err := pool.add(tx, local)
 	if err != nil {
 		return err
 	}
 	// If we added a new transaction, run promotion checks and return
+	// !replace 为 true, 是指原来这笔交易不存在，是一笔新的交易。
 	if !replace {
 		from, _ := types.Sender(pool.signer, tx) // already validated
-		// 从queue中选取一些交易放入pending列表中等待执行
-		// queue=>pending
 		pool.promoteExecutables([]common.Address{from})
 	}
 	return nil
@@ -955,15 +965,15 @@ func (pool *TxPool) removeTx(hash common.Hash, outofbound bool) {
 // promoteExecutables moves transactions that have become processable from the
 // future queue to the set of pending transactions. During this process, all
 // invalidated transactions (low nonce, low balance) are deleted.
-// 将queue队列中的交易放入pending队列中
-// 移除一些低费，低nonce的交易
-// TODO：comment by chenfeixiang
+// 将可执行的交易从queue
 func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	// Track the promoted transactions to broadcast them at once
+	// 声明一个待广播的交易列表
 	var promoted []*types.Transaction
 
 	// Gather all the accounts potentially needing updates
-	// accounts存储了所有潜在需要更新的账户。 如果账户传入为nil，代表所有已知的账户。
+	// 如果账户传入为nil，代表所有已知的账户。
+	// accounts存储了所有潜在需要更新的账户。
 	if accounts == nil {
 		accounts = make([]common.Address, 0, len(pool.queue))
 		for addr := range pool.queue {
@@ -971,10 +981,9 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 		}
 	}
 	// Iterate over all accounts and promote any executable transactions
-	// 遍历账户
+	// 迭代所有当前账户的交易
 	for _, addr := range accounts {
-		list := pool.queue[addr]
-		// 遍历结束退出
+		list := pool.queue[addr]【
 		if list == nil {
 			continue // Just in case someone calls with a non existing account
 		}
@@ -987,7 +996,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			pool.priced.Removed()
 		}
 		// Drop all transactions that are too costly (low balance or out of gas)
-		// 删除所有余额不足的交易。
+		// 删除所有余额不足或者gas不足的交易。
 		drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
 		for _, tx := range drops {
 			hash := tx.Hash()
@@ -996,13 +1005,14 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			pool.priced.Removed()
 			queuedNofundsCounter.Inc(1)
 		}
+		// 剩下的都是可执行的交易了
 		// Gather all executable transactions and promote them
-		// 得到所有的可以执行的交易，并promoteTx加入pending
 		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr)) {
 			hash := tx.Hash()
-			// 广播交易
 			if pool.promoteTx(addr, hash, tx) {
+				// 该交易的状态更新为penging并且放在penging队列中
 				log.Trace("Promoting queued transaction", "hash", hash)
+				// 将交易放入待广播交易列表
 				promoted = append(promoted, tx)
 			}
 		}
@@ -1025,6 +1035,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	}
 	// Notify subsystem for new promoted transactions.
 	if len(promoted) > 0 {
+		// 发送消息
 		go pool.txFeed.Send(NewTxsEvent{promoted})
 	}
 	// If the pending limit is overflown, start equalizing allowances
