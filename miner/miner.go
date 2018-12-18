@@ -41,15 +41,15 @@ type Backend interface {
 
 // Miner creates blocks and searches for proof-of-work values.
 type Miner struct {
-	mux      *event.TypeMux
-	worker   *worker
-	coinbase common.Address
-	eth      Backend
-	engine   consensus.Engine
-	exitCh   chan struct{}
+	mux      *event.TypeMux   // 事件锁
+	worker   *worker          // worker 产生块的对象
+	coinbase common.Address   // 矿工地址
+	eth      Backend          // Backend对象，Backend是一个自定义接口封装了所有挖矿所需方法
+	engine   consensus.Engine // 共识引擎 以太坊有两种共识引擎ethash和clique
+	exitCh   chan struct{}    // 停止挖矿的channel
 
-	canStart    int32 // can start indicates whether we can start the mining operation
-	shouldStart int32 // should start indicates whether we should start after sync
+	canStart    int32 // can start indicates whether we can start the mining operation 是否能够开始挖矿
+	shouldStart int32 // should start indicates whether we should start after sync 同步后是否应该开始挖矿
 }
 
 func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine consensus.Engine, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(block *types.Block) bool) *Miner {

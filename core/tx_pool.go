@@ -458,6 +458,7 @@ func (pool *TxPool) Stop() {
 
 // SubscribeNewTxsEvent registers a subscription of NewTxsEvent and
 // starts sending event to the given channel.
+// 订阅事件的方法
 func (pool *TxPool) SubscribeNewTxsEvent(ch chan<- NewTxsEvent) event.Subscription {
 	return pool.scope.Track(pool.txFeed.Subscribe(ch))
 }
@@ -966,7 +967,7 @@ func (pool *TxPool) removeTx(hash common.Hash, outofbound bool) {
 // promoteExecutables moves transactions that have become processable from the
 // future queue to the set of pending transactions. During this process, all
 // invalidated transactions (low nonce, low balance) are deleted.
-// 将可执行的交易从queue
+// 将可执行的交易从queue队列放在pending队列中
 func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	// Track the promoted transactions to broadcast them at once
 	// 声明一个待广播的交易列表
@@ -1011,7 +1012,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr)) {
 			hash := tx.Hash()
 			if pool.promoteTx(addr, hash, tx) {
-				// 该交易的状态更新为penging并且放在penging队列中
+				// 该交易的状态更新为pending并且放在pending队列中
 				log.Trace("Promoting queued transaction", "hash", hash)
 				// 将交易放入待广播交易列表
 				promoted = append(promoted, tx)

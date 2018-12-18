@@ -131,9 +131,9 @@ type worker struct {
 	gasCeil  uint64
 
 	// Subscriptions
-	mux          *event.TypeMux
+	mux          *event.TypeMux // 同步锁
 	txsCh        chan core.NewTxsEvent
-	txsSub       event.Subscription
+	txsSub       event.Subscription // 交易订阅
 	chainHeadCh  chan core.ChainHeadEvent
 	chainHeadSub event.Subscription
 	chainSideCh  chan core.ChainSideEvent
@@ -204,6 +204,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
 	}
 	// Subscribe NewTxsEvent for tx pool
+	// tx_pool的新交易事件订阅
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
