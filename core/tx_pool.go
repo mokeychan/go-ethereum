@@ -741,7 +741,7 @@ func (pool *TxPool) enqueueTx(hash common.Hash, tx *types.Transaction) (bool, er
 	// Discard any previous transaction and mark this
 	if old != nil {
 		pool.all.Remove(old.Hash()) // 从tx_pool列表中移除
-		pool.priced.Removed() // 从排序的列表中移除
+		pool.priced.Removed()       // 从排序的列表中移除
 		queuedReplaceCounter.Inc(1) // queue队列的替换计数器记录1
 	}
 	// 将上面的newer tx 放入池中
@@ -983,7 +983,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	// Iterate over all accounts and promote any executable transactions
 	// 迭代所有当前账户的交易
 	for _, addr := range accounts {
-		list := pool.queue[addr]【
+		list := pool.queue[addr]
 		if list == nil {
 			continue // Just in case someone calls with a non existing account
 		}
