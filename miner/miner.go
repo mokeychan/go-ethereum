@@ -43,12 +43,12 @@ type Backend interface {
 type Miner struct {
 	mux      *event.TypeMux   // 事件锁
 	worker   *worker          // worker 产生块的对象
-	coinbase common.Address   // 矿工地址
+	coinbase common.Address   // 矿工地址(节点地址)
 	eth      Backend          // Backend对象，Backend是一个自定义接口封装了所有挖矿所需方法
-	engine   consensus.Engine // 共识引擎 以太坊有两种共识引擎ethash和clique
+	engine   consensus.Engine // 共识引擎
 	exitCh   chan struct{}    // 停止挖矿的channel
 
-	canStart    int32 // can start indicates whether we can start the mining operation 是否能够开始挖矿
+	canStart    int32 // can start indicates whether we can start the mining operation 是否能够开始挖矿操作
 	shouldStart int32 // should start indicates whether we should start after sync 同步后是否应该开始挖矿
 }
 

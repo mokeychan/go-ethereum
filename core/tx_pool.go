@@ -458,7 +458,8 @@ func (pool *TxPool) Stop() {
 
 // SubscribeNewTxsEvent registers a subscription of NewTxsEvent and
 // starts sending event to the given channel.
-// 订阅事件的方法
+// 外部会通过SubscribeNewTxsEvent()函数来订阅事件NewTxsEvent
+// worker.go 209 处会通过这个方法来订阅事件
 func (pool *TxPool) SubscribeNewTxsEvent(ch chan<- NewTxsEvent) event.Subscription {
 	return pool.scope.Track(pool.txFeed.Subscribe(ch))
 }
@@ -670,10 +671,11 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 	}
 	// If the transaction is replacing an already pending one, do directly
 	from, _ := types.Sender(pool.signer, tx) // already validated
+	// 获取pending队列中发起者的交易列表，并判断该笔交易的nonce是否存在
 	// 如果用户发起了一笔交易还没有并执行，又发送了一笔nonce相同的交易，则保留gasprice高的那笔交易。
 	// list.Overlaps()函数就是用来判断pending列表中是否包含相同nonce的交易
-	// 获取pending队列中发起者的交易列表，并判断该笔交易的nonce是否存在
 	// pending
+	// (tx : 呵，我上面有人，不需要跟你们这些小水水去queue了，我要直接去见worker叔叔.)
 	if list := pool.pending[from]; list != nil && list.Overlaps(tx) {
 		// Nonce already pending, check if required price bump is met
 		inserted, old := list.Add(tx, pool.config.PriceBump)
@@ -681,20 +683,23 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 			pendingDiscardCounter.Inc(1)
 			return false, ErrReplaceUnderpriced
 		}
+		// 新加入的交易替换掉旧的交易
 		// New transaction is better, replace old one
 		if old != nil {
+			// 移除旧的交易
 			pool.all.Remove(old.Hash())
 			pool.priced.Removed()
 			pendingReplaceCounter.Inc(1)
 		}
-		pool.all.Add(tx)         // 放入交易列表
+		pool.all.Add(tx)         // 新 放入交易列表
 		pool.priced.Put(tx)      // 放入排序好(gasPrice低，nonce小)的列表
 		pool.journalTx(from, tx) // (是否)放入本地交易日志
 
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
 
 		// We've directly injected a replacement transaction, notify subsystems
-		// 启用一个协程，发布事件(feed.Send(txs []transaction))
+		// 此tx在pending池中是可执行的交易，启用一个协程，发布事件NewTxsEvent，通知订阅者
+		// 外部订阅这个事件
 		go pool.txFeed.Send(NewTxsEvent{types.Transactions{tx}})
 
 		return old != nil, nil
@@ -857,6 +862,7 @@ func (pool *TxPool) addTx(tx *types.Transaction, local bool) error {
 	// !replace 为 true, 是指原来这笔交易不存在，是一笔新的交易。
 	if !replace {
 		from, _ := types.Sender(pool.signer, tx) // already validated
+		// promoteExecutables 将queue交易移动到pending
 		pool.promoteExecutables([]common.Address{from})
 	}
 	return nil
@@ -967,7 +973,8 @@ func (pool *TxPool) removeTx(hash common.Hash, outofbound bool) {
 // promoteExecutables moves transactions that have become processable from the
 // future queue to the set of pending transactions. During this process, all
 // invalidated transactions (low nonce, low balance) are deleted.
-// 将可执行的交易从queue队列放在pending队列中
+// promoteExecutables() 主要有两个作用：
+// 1.从queue队列中选取符合条件的交易加入到pending中 2.对pending、queue队列进行清理
 func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	// Track the promoted transactions to broadcast them at once
 	// 声明一个待广播的交易列表
@@ -990,7 +997,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			continue // Just in case someone calls with a non existing account
 		}
 		// Drop all transactions that are deemed too old (low nonce)
-		// 删除所有的nonce太低的交易
+		// 删除所有的nonce太低的交易 （丢弃交易nonce值 < 账户当前nonce的交易）
 		for _, tx := range list.Forward(pool.currentState.GetNonce(addr)) {
 			hash := tx.Hash()
 			log.Trace("Removed old queued transaction", "hash", hash)
@@ -998,7 +1005,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			pool.priced.Removed()
 		}
 		// Drop all transactions that are too costly (low balance or out of gas)
-		// 删除所有余额不足或者gas不足的交易。
+		// 删除所有余额不足或者gas不足的交易
 		drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
 		for _, tx := range drops {
 			hash := tx.Hash()
@@ -1007,10 +1014,12 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			pool.priced.Removed()
 			queuedNofundsCounter.Inc(1)
 		}
+
 		// 剩下的都是可执行的交易了
 		// Gather all executable transactions and promote them
 		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr)) {
 			hash := tx.Hash()
+			// queue=>pending
 			if pool.promoteTx(addr, hash, tx) {
 				// 该交易的状态更新为pending并且放在pending队列中
 				log.Trace("Promoting queued transaction", "hash", hash)
@@ -1018,6 +1027,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 				promoted = append(promoted, tx)
 			}
 		}
+
 		// Drop all transactions over the allowed limit
 		// 删除本地不存在的交易
 		if !pool.locals.contains(addr) {
@@ -1036,8 +1046,9 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 		}
 	}
 	// Notify subsystem for new promoted transactions.
+	// 只要这个待广播的交易列表有交易放进来了，就发布NewTxsEvent，通知订阅者
 	if len(promoted) > 0 {
-		// 发送消息
+		// 启动一个协程来发布事件
 		go pool.txFeed.Send(NewTxsEvent{promoted})
 	}
 	// If the pending limit is overflown, start equalizing allowances
@@ -1045,7 +1056,9 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	for _, list := range pool.pending {
 		pending += uint64(list.Len())
 	}
+	// 清理pending
 	// 如果pending总数超过tx_pool的配置GlobalSlots
+	// pending列表达到最大限量
 	if pending > pool.config.GlobalSlots {
 		pendingBeforeCap := pending
 		// Assemble a spam order to penalize large transactors first
@@ -1053,12 +1066,14 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 		for addr, list := range pool.pending {
 			// Only evict transactions from high rollers
 			// 有账户交易数超过阀值AccountSlots
+			// 统计高额交易
 			if !pool.locals.contains(addr) && uint64(list.Len()) > pool.config.AccountSlots {
 				// 按照交易数最小的账户进行均衡
 				spammers.Push(addr, int64(list.Len()))
 			}
 		}
 		// Gradually drop transactions from offenders
+		// 逐渐驱逐高额交易
 		offenders := []common.Address{}
 		// 如果pending总数超过tx_pool的配置GlobalSlots
 		for pending > pool.config.GlobalSlots && !spammers.Empty() {
@@ -1067,11 +1082,15 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			offenders = append(offenders, offender.(common.Address))
 
 			// Equalize balances until all the same or below threshold
+			// 均衡各账户存储的交易数直到交易数相同
+			// 均衡交易数时采取的策略是：在超出交易数的账户里以交易数最少的为标准，将其他账户的交易数削减至该标准
 			if len(offenders) > 1 {
 				// Calculate the equalization threshold for all current offenders
+				// 超标账户的最低交易数
 				threshold := pool.pending[offender.(common.Address)].Len()
 
 				// Iteratively reduce all offenders until below limit or threshold reached
+				// 将其他账户的交易数削减至threshold
 				for pending > pool.config.GlobalSlots && pool.pending[offenders[len(offenders)-2]].Len() > threshold {
 					for i := 0; i < len(offenders)-1; i++ {
 						list := pool.pending[offenders[i]]
@@ -1093,6 +1112,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			}
 		}
 		// If still above threshold, reduce to limit or min allowance
+		// 经过上面的交易数均衡后，pengding长度依旧超过GlobalSlots 此时按照AccountSlots标准将超标的账户里交易数削减至AccountSlots
 		if pending > pool.config.GlobalSlots && len(offenders) > 0 {
 			for pending > pool.config.GlobalSlots && uint64(pool.pending[offenders[len(offenders)-1]].Len()) > pool.config.AccountSlots {
 				for _, addr := range offenders {
@@ -1120,8 +1140,11 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 	for _, list := range pool.queue {
 		queued += uint64(list.Len())
 	}
+	// 清理queue
+	// queue队列长度大于queue队列最大长度
 	if queued > pool.config.GlobalQueue {
 		// Sort all accounts with queued transactions by heartbeat
+		// 对队列里的所有账户按最近一次心跳时间排序
 		addresses := make(addressesByHeartbeat, 0, len(pool.queue))
 		for addr := range pool.queue {
 			if !pool.locals.contains(addr) { // don't drop locals
@@ -1131,6 +1154,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 		sort.Sort(addresses)
 
 		// Drop transactions until the total is below the limit or only locals remain
+		// 按顺序删除相关账户的交易，直到queue队列长度符合条件
 		for drop := queued - pool.config.GlobalQueue; drop > 0 && len(addresses) > 0; {
 			addr := addresses[len(addresses)-1]
 			list := pool.queue[addr.address]
