@@ -124,19 +124,19 @@ type intervalAdjust struct {
 type worker struct {
 	config *params.ChainConfig
 	engine consensus.Engine
-	eth    Backend
-	chain  *core.BlockChain
+	eth    Backend          // 以太坊终端
+	chain  *core.BlockChain // 链对象
 
 	gasFloor uint64
 	gasCeil  uint64
 
 	// Subscriptions
-	mux          *event.TypeMux // 同步锁
-	txsCh        chan core.NewTxsEvent
-	txsSub       event.Subscription // 交易订阅
-	chainHeadCh  chan core.ChainHeadEvent
+	mux          *event.TypeMux           // 同步锁
+	txsCh        chan core.NewTxsEvent    // 交易池更新事件
+	txsSub       event.Subscription       // 交易订阅
+	chainHeadCh  chan core.ChainHeadEvent // 区块头更新事件
 	chainHeadSub event.Subscription
-	chainSideCh  chan core.ChainSideEvent
+	chainSideCh  chan core.ChainSideEvent // 区块链分叉事件
 	chainSideSub event.Subscription
 
 	// Channels
@@ -148,25 +148,25 @@ type worker struct {
 	resubmitIntervalCh chan time.Duration
 	resubmitAdjustCh   chan *intervalAdjust
 
-	current      *environment                 // An environment for current running cycle.
-	localUncles  map[common.Hash]*types.Block // A set of side blocks generated locally as the possible uncle blocks.
-	remoteUncles map[common.Hash]*types.Block // A set of side blocks as the possible uncle blocks.
-	unconfirmed  *unconfirmedBlocks           // A set of locally mined blocks pending canonicalness confirmations.
+	current      *environment                 // An environment for current running cycle. 当前挖矿生命周期的执行环境
+	localUncles  map[common.Hash]*types.Block // A set of side blocks generated locally as the possible uncle blocks. 本地分叉区块作为潜在叔块
+	remoteUncles map[common.Hash]*types.Block // A set of side blocks as the possible uncle blocks. 分叉区块中潜在的叔块
+	unconfirmed  *unconfirmedBlocks           // A set of locally mined blocks pending canonicalness confirmations. 本地产生但尚未被确认的区块
 
 	mu       sync.RWMutex // The lock used to protect the coinbase and extra fields
 	coinbase common.Address
 	extra    []byte
 
 	pendingMu    sync.RWMutex
-	pendingTasks map[common.Hash]*task
+	pendingTasks map[common.Hash]*task // 挖矿任务map
 
-	snapshotMu    sync.RWMutex // The lock used to protect the block snapshot and state snapshot
-	snapshotBlock *types.Block
-	snapshotState *state.StateDB
+	snapshotMu    sync.RWMutex   // The lock used to protect the block snapshot and state snapshot
+	snapshotBlock *types.Block   // 快照区块
+	snapshotState *state.StateDB // 快照stateDB
 
 	// atomic status counters
-	running int32 // The indicator whether the consensus engine is running or not.
-	newTxs  int32 // New arrival transaction count since last sealing work submitting.
+	running int32 // The indicator whether the consensus engine is running or not. 判断共识引擎是否启动
+	newTxs  int32 // New arrival transaction count since last sealing work submitting. 记录上次递交任务后新来的区块数量
 
 	// External functions
 	isLocalBlock func(block *types.Block) bool // Function used to determine whether the specified block is mined by local miner.
@@ -193,9 +193,9 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		remoteUncles:       make(map[common.Hash]*types.Block),
 		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
 		pendingTasks:       make(map[common.Hash]*task),
-		txsCh:              make(chan core.NewTxsEvent, txChanSize),           // TxPreEvent事件是TxPool发出的事件，代表一个新交易tx加入到了交易池中，这时候如果work空闲会将该笔交易收进work.txs，准备下一次打包进块。
-		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize), // ChainHeadEvent事件，代表已经有一个块作为链头，此时work.update函数会监听到这个事件，则会继续挖新的区块。
-		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize), // ChainSideEvent事件，代表有一个新块作为链的旁支，会被放到possibleUncles数组中，可能称为叔块。
+		txsCh:              make(chan core.NewTxsEvent, txChanSize),           // TxPreEvent事件是TxPool发出的事件，代表一个新交易tx加入到了交易池中，准备下一次打包进块。
+		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize), // ChainHeadEvent事件，代表已经有一个块作为链头，则会继续挖新的区块。
+		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize), // ChainSideEvent事件，代表有一个新块作为链的旁支，可能称为叔块。
 		newWorkCh:          make(chan *newWorkReq),
 		taskCh:             make(chan *task),
 		resultCh:           make(chan *types.Block, resultQueueSize),
@@ -217,12 +217,17 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		recommit = minRecommitInterval
 	}
 
-	go worker.mainLoop()
+	// 注意这四个协程，如何监听订阅的事件
+	// go worker.mainLoop()
+	// newWorkLoop 是一个一直监听 startCh 中是否有挖矿信号
+	// (startCh的信号由 start函数放置进去的，见下面的start方法)
 	go worker.newWorkLoop(recommit)
+	go worker.mainLoop()
 	go worker.resultLoop()
 	go worker.taskLoop()
 
 	// Submit first work to initialize pending state.
+	// 直接进入newWorkLoop()的逻辑
 	worker.startCh <- struct{}{}
 
 	return worker
@@ -289,6 +294,7 @@ func (w *worker) close() {
 }
 
 // newWorkLoop is a standalone goroutine to submit new mining work upon received events.
+// newWorkLoop主要监听两个重要的通道，startCh 启动通道 和 chainHeadCh 规范链通道
 func (w *worker) newWorkLoop(recommit time.Duration) {
 	var (
 		interrupt   *int32
@@ -401,7 +407,9 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 }
 
 // mainLoop is a standalone goroutine to regenerate the sealing task based on the received event.
+// 主要监听newWorkCh 新work通道、txsCh交易事件通道、chainSideCh分叉事件通道
 func (w *worker) mainLoop() {
+	// 最后取消订阅这三个事件
 	defer w.txsSub.Unsubscribe()
 	defer w.chainHeadSub.Unsubscribe()
 	defer w.chainSideSub.Unsubscribe()
@@ -413,6 +421,7 @@ func (w *worker) mainLoop() {
 
 		case ev := <-w.chainSideCh:
 			// Short circuit for duplicate side blocks
+			// 检验该hash的区块是否已经被当做潜在叔块，如果是，则忽略
 			if _, exist := w.localUncles[ev.Block.Hash()]; exist {
 				continue
 			}
@@ -420,6 +429,7 @@ func (w *worker) mainLoop() {
 				continue
 			}
 			// Add side block to possible uncle block set depending on the author.
+			// 将该区块作为潜在叔块加入叔块map，key为该区块的矿工地址
 			if w.isLocalBlock != nil && w.isLocalBlock(ev.Block) {
 				w.localUncles[ev.Block.Hash()] = ev.Block
 			} else {
@@ -427,6 +437,7 @@ func (w *worker) mainLoop() {
 			}
 			// If our mining block contains less than 2 uncle blocks,
 			// add the new uncle block if valid and regenerate a mining block.
+			// 如果我们正在mining的区块少于两个uncles，则添加新的uncles并重新生成mining block
 			if w.isRunning() && w.current != nil && w.current.uncles.Cardinality() < 2 {
 				start := time.Now()
 				if err := w.commitUncle(w.current, ev.Block.Header()); err == nil {
@@ -491,7 +502,8 @@ func (w *worker) mainLoop() {
 }
 
 // taskLoop is a standalone goroutine to fetch sealing task from the generator and
-// push them to consensus engine.
+// push them to consensus engine
+// 注意taskCh挖矿任务通道
 func (w *worker) taskLoop() {
 	var (
 		stopCh chan struct{}
@@ -539,6 +551,7 @@ func (w *worker) taskLoop() {
 
 // resultLoop is a standalone goroutine to handle sealing result submitting
 // and flush relative data to the database.
+// resultCh注意挖矿结果通道
 func (w *worker) resultLoop() {
 	for {
 		select {

@@ -52,15 +52,18 @@ type Miner struct {
 	shouldStart int32 // should start indicates whether we should start after sync 同步后是否应该开始挖矿
 }
 
+// 挖矿开始前需要创建新的miner
 func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine consensus.Engine, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(block *types.Block) bool) *Miner {
 	miner := &Miner{
-		eth:      eth,
-		mux:      mux,
-		engine:   engine,
-		exitCh:   make(chan struct{}),
+		eth:    eth,
+		mux:    mux,
+		engine: engine,
+		exitCh: make(chan struct{}),
+		// 创建真正挖矿的苦命仔
 		worker:   newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
 		canStart: 1,
 	}
+	// 注意这个方法
 	go miner.update()
 
 	return miner
@@ -70,8 +73,11 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 // It's entered once and as soon as `Done` or `Failed` has been broadcasted the events are unregistered and
 // the loop is exited. This to prevent a major security vuln where external parties can DOS you with blocks
 // and halt your mining operation for as long as the DOS continues.
+// 监听downloader事件，控制着canStart和shouldStart这两个开关，用于抵挡DOS攻击
 func (self *Miner) update() {
+	// 注册下载开始事件，下载结束事件，下载失败事件
 	events := self.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	// 处理完以后要取消订阅
 	defer events.Unsubscribe()
 
 	for {
@@ -81,30 +87,37 @@ func (self *Miner) update() {
 				return
 			}
 			switch ev.Data.(type) {
+			// 当监听到downloader的StartEvent事件时，canStart设置为0，表示downloader同步时不可进行挖矿
 			case downloader.StartEvent:
 				atomic.StoreInt32(&self.canStart, 0)
+				// 如果正在挖矿，停止挖矿，同时将shouldStart设置为1，以便下次直接开始挖矿
 				if self.Mining() {
 					self.Stop()
 					atomic.StoreInt32(&self.shouldStart, 1)
 					log.Info("Mining aborted due to sync")
 				}
 			case downloader.DoneEvent, downloader.FailedEvent:
+				// 判断shouldStart是否打开
 				shouldStart := atomic.LoadInt32(&self.shouldStart) == 1
 
 				atomic.StoreInt32(&self.canStart, 1)
 				atomic.StoreInt32(&self.shouldStart, 0)
+				// 如果是打开的，则再打开canStart，将shouldStart关闭
 				if shouldStart {
+					// 将挖矿的控制权完全交给miner.Start()方法
 					self.Start(self.coinbase)
 				}
 				// stop immediately and ignore all further pending events
 				return
 			}
+		// 收到停止挖矿的信号就直接退出
 		case <-self.exitCh:
 			return
 		}
 	}
 }
 
+// miner的启动，打开shouldStart，设置coinbase，然后启动worker
 func (self *Miner) Start(coinbase common.Address) {
 	atomic.StoreInt32(&self.shouldStart, 1)
 	self.SetEtherbase(coinbase)
