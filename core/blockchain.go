@@ -628,6 +628,7 @@ func (bc *BlockChain) GetBlockByHash(hash common.Hash) *types.Block {
 
 // GetBlockByNumber retrieves a block from the database by number, caching it
 // (associated with its hash) if found.
+// 根据块高查询区块信息
 func (bc *BlockChain) GetBlockByNumber(number uint64) *types.Block {
 	hash := rawdb.ReadCanonicalHash(bc.db, number)
 	if hash == (common.Hash{}) {

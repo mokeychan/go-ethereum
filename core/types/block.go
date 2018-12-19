@@ -129,7 +129,7 @@ type Body struct {
 // 区块的结构
 type Block struct {
 	header       *Header      // 包含的区块头信息
-	uncles       []*Header    // 包含的叔区块信息
+	uncles       []*Header    // 包含的叔块信息
 	transactions Transactions // 包含的交易数组
 
 	// caches
