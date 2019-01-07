@@ -33,7 +33,7 @@ import (
 
 type revision struct {
 	id           int
-	journalIndex int
+	journalIndex int // 是日志（journal）的索引
 }
 
 var (
@@ -56,14 +56,14 @@ func (n *proofList) Put(key []byte, value []byte) error {
 // nested states. It's the general query interface to retrieve:
 // * Contracts
 // * Accounts
-// stateObject存储在stateDB中，stateDB存储在trie上，作为二级缓存（一级缓存为map一些结构），tire存在在db中，保存在链上。
+// stateObject存储在stateDB中，stateDB(一级缓存)存储在trie上，tire作为二级缓存，tire存在在db中(三级缓存)，保存在链上。
 type StateDB struct {
-	db   Database
-	trie Trie // 所属树
+	db   Database // 底层的数据库db
+	trie Trie     // 所属树
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
-	stateObjects      map[common.Address]*stateObject // 包含的stateObject
-	stateObjectsDirty map[common.Address]struct{}
+	stateObjects      map[common.Address]*stateObject // 包含的stateObject（是否可以理解成零级缓存?!）
+	stateObjectsDirty map[common.Address]struct{}     // "脏账户"，就是在StateDB中，账户已经被修改了，但是状态树中的值还没有修改，这些账户就被存到stateObjectsDirty中
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
@@ -84,8 +84,10 @@ type StateDB struct {
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
-	journal        *journal
-	validRevisions []revision
+	journal        *journal   // 日志 存的是账户变动的反向操作 这对以太坊实现快照功能以及回滚世界状态非常有用。
+	validRevisions []revision // validRevisions是一个revision的切片，后者存的是日志（journal）的索引
+	// 如何回滚快照
+	// 通过revision的journalIndex可以索引到日志切片的位置，回滚到某个revision就只要去查找当前journals切片中大于revision.journalIndex的那些日志，并执行，即可回滚到当前revision指定的世界状态。
 	nextRevisionId int
 }
 
@@ -543,6 +545,7 @@ func (self *StateDB) Copy() *StateDB {
 }
 
 // Snapshot returns an identifier for the current revision of the state.
+// 拍摄快照
 func (self *StateDB) Snapshot() int {
 	id := self.nextRevisionId
 	self.nextRevisionId++
@@ -551,6 +554,7 @@ func (self *StateDB) Snapshot() int {
 }
 
 // RevertToSnapshot reverts all state changes made since the given revision.
+// 恢复快照
 func (self *StateDB) RevertToSnapshot(revid int) {
 	// Find the snapshot in the stack of valid snapshots.
 	idx := sort.Search(len(self.validRevisions), func(i int) bool {
@@ -573,6 +577,7 @@ func (self *StateDB) GetRefund() uint64 {
 
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
+// 将状态写进tire中
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	for addr := range s.journal.dirties {
 		stateObject, exist := s.stateObjects[addr]
@@ -601,7 +606,9 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
+// 获得当前状态的树根root hash
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
+	// false
 	s.Finalise(deleteEmptyObjects)
 	return s.trie.Hash()
 }
@@ -621,6 +628,7 @@ func (s *StateDB) clearJournalAndRefund() {
 }
 
 // Commit writes the state to the underlying in-memory trie database.
+// 将状态写入数据库db
 func (s *StateDB) Commit(deleteEmptyObjects bool) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
 

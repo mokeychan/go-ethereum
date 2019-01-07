@@ -235,17 +235,20 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		}()
 	}
 	// 通过run方法来执行合约，1.通过解释器解析合约指令 2.执行预编译好的合约
+	// 返回合约执行结果，错误
 	ret, err = run(evm, contract, input, false)
 
 	// When an error was returned by the EVM or when setting the creation code
 	// above we revert to the snapshot and consume any gas remaining. Additionally
 	// when we're in homestead this also counts for code storage gas errors.
+	// 如果出现错误，就回滚快照
 	if err != nil {
 		evm.StateDB.RevertToSnapshot(snapshot)
 		if err != errExecutionReverted {
 			contract.UseGas(contract.Gas)
 		}
 	}
+	// 跟踪错误
 	return ret, contract.Gas, err
 }
 

@@ -86,7 +86,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
 // 执行交易并返回凭证数据
+// 返回交易的凭据，gas消耗，可能造成失败的错误
 func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error) {
+	//
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, 0, err
@@ -102,23 +104,25 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	// 通过evm的对象来执行Message
 	// ApplyMessage
 	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
+	// 如果执行交易的时候返回了错误，就返回没凭据，0消耗，错误
 	if err != nil {
 		return nil, 0, err
 	}
-	// 更新状态
+	// 没有错误就成功了=>更新状态
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
 		statedb.Finalise(true)
 	} else {
-		// 获取变化后的状态树的树根
+		// 获取(变化后的状态树的)树根
+		// TODO
 		root = statedb.IntermediateRoot(config.IsEIP158(header.Number)).Bytes()
 	}
 	*usedGas += gas
 
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	// 返回交易凭据
+	// 创建交易凭据
 	receipt := types.NewReceipt(root, failed, *usedGas)
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = gas
@@ -129,6 +133,6 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	// Set the receipt logs and create a bloom for filtering
 	receipt.Logs = statedb.GetLogs(tx.Hash())                  // 日志数据是EVM执行指令代码的时候产生
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt}) // 根据日志数据建立bloom过滤器
-
+	// err is nil
 	return receipt, gas, err
 }

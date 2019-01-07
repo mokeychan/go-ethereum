@@ -110,6 +110,8 @@ func IntrinsicGas(data []byte, contractCreation, homestead bool) (uint64, error)
 
 // NewStateTransition initialises and returns a new state transition object.
 func NewStateTransition(evm *vm.EVM, msg Message, gp *GasPool) *StateTransition {
+	// 取消智能合约手续费的功能，可以在这里设置gasPrice的值为0.
+	// 由于gasPrice对交易的过滤机制是在交易处理ApplyMessage函数之前就完成了，所以在这里可以取巧
 	return &StateTransition{
 		gp:       gp,
 		evm:      evm,
@@ -149,8 +151,11 @@ func (st *StateTransition) useGas(amount uint64) error {
 	return nil
 }
 
+// 购买gas
 func (st *StateTransition) buyGas() error {
+	// 扣除了gasLimit*gasPrice的gas(暂时先扣那么多，可能多扣，而实际上交易消耗的真实gas是gasUsed*gasPrice)
 	mgval := new(big.Int).Mul(new(big.Int).SetUint64(st.msg.Gas()), st.gasPrice)
+	// 判断账户的余额
 	if st.state.GetBalance(st.msg.From()).Cmp(mgval) < 0 {
 		return errInsufficientBalanceForGas
 	}
@@ -164,6 +169,7 @@ func (st *StateTransition) buyGas() error {
 	return nil
 }
 
+// 进行nonce的检查
 func (st *StateTransition) preCheck() error {
 	// Make sure this transaction's nonce is correct.
 	if st.msg.CheckNonce() {
@@ -174,6 +180,7 @@ func (st *StateTransition) preCheck() error {
 			return ErrNonceTooLow
 		}
 	}
+	// 最后调用buyGas()
 	return st.buyGas()
 }
 
@@ -181,6 +188,7 @@ func (st *StateTransition) preCheck() error {
 // returning the result including the used gas. It returns an error if failed.
 // An error indicates a consensus issue.
 func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bool, err error) {
+	// 先检查Gas
 	if err = st.preCheck(); err != nil {
 		return
 	}
@@ -214,22 +222,29 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		// 如果不是新创建的合约，则调用执行合约的方法。同时更新发送方地址nonce值+1
 		// Increment the nonce for the next transaction
 		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
+		// 执行合约
+		// 返回ret gas err
 		ret, st.gas, vmerr = evm.Call(sender, st.to(), st.data, st.gas, st.value)
 	}
+	// （之前已经回滚了快照）如果执行合约出现了错误
 	if vmerr != nil {
 		log.Debug("VM returned with error", "err", vmerr)
 		// The only possible consensus-error would be if there wasn't
 		// sufficient balance to make the transfer happen. The first
 		// balance transfer may never fail.
+		// insufficient balance for transfer
+		// 如果转账的余额不足，只返回错误
 		if vmerr == vm.ErrInsufficientBalance {
 			return nil, 0, false, vmerr
 		}
 	}
-	// 计算合约退税
+	// StateTransaction
+	// 之前多扣的gas总数，还给交易账户from
 	st.refundGas()
-	// 计算合约产生的gas总数，加入到矿工账户，以作为奖励
+	// 计算合约产生的gas总数，加入到矿工账户coinbase，以作为奖励
 	st.state.AddBalance(st.evm.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
 
+	// 结果继续往上抛 跟踪
 	return ret, st.gasUsed(), vmerr != nil, err
 }
 
@@ -243,6 +258,7 @@ func (st *StateTransition) refundGas() {
 
 	// Return ETH for remaining gas, exchanged at the original rate.
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(st.gas), st.gasPrice)
+	// 之前多扣的gas总数，还给from账户
 	st.state.AddBalance(st.msg.From(), remaining)
 
 	// Also return remaining gas to the block gas counter so it is
