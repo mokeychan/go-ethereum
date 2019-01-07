@@ -91,10 +91,12 @@ type StateDB struct {
 	nextRevisionId int
 }
 
-// 新建一个statedb
+// 使用给定的树根创建树;实例化StateDB结构
+// TOVIEW  调用时机:
+// 1.BlockChain插入区块链时进行状态验证：BlockChain.inertChain —> state.New
+// 2.BlockChain初始化时验证状态是否可读：BlockChain.loadLastState —> state.New
 // Create a new state from a given trie.
 func New(root common.Hash, db Database) (*StateDB, error) {
-	// 根据树根打开一棵树
 	tr, err := db.OpenTrie(root)
 	if err != nil {
 		return nil, err
@@ -370,16 +372,21 @@ func (self *StateDB) SetState(addr common.Address, key, value common.Hash) {
 //
 // The account's state object is still available until the state is committed,
 // getStateObject will return a non-nil account after Suicide.
+// 销毁账户
+// 它的反向操作就是获取该stateObject，恢复自杀标记，然后余额返回账户。
 func (self *StateDB) Suicide(addr common.Address) bool {
+	// 获取账户的stateObject对象
 	stateObject := self.getStateObject(addr)
 	if stateObject == nil {
 		return false
 	}
+	// 添加删除日志
 	self.journal.append(suicideChange{
 		account:     &addr,
 		prev:        stateObject.suicided,
 		prevbalance: new(big.Int).Set(stateObject.Balance()),
 	})
+	// 标记账户自杀，余额清零
 	stateObject.markSuicided()
 	stateObject.data.Balance = new(big.Int)
 
@@ -449,15 +456,23 @@ func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten and returned as the second return value.
+// 创建一个stateObject(新账户-)
 func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) {
+	// 先看下这个地址之前的账户状态，如果有就不用新建账户
 	prev = self.getStateObject(addr)
 	newobj = newObject(self, addr, Account{})
+	// 设置nonce的初始值
 	newobj.setNonce(0) // sets the object to dirty
 	if prev == nil {
+		// 添加到日志（新的）
+		// createObjectChange 注意它的实现
 		self.journal.append(createObjectChange{account: &addr})
 	} else {
+		// 添加到日志
+		// resetObjectChange 注意它的实现
 		self.journal.append(resetObjectChange{prev: prev})
 	}
+	// set一个stateObject(新账户-)
 	self.setStateObject(newobj)
 	return newobj, prev
 }
@@ -546,17 +561,29 @@ func (self *StateDB) Copy() *StateDB {
 
 // Snapshot returns an identifier for the current revision of the state.
 // 拍摄快照
+// ToView
+// 调用时机：
+// 1.EVM调用Call、CallCode、DelegateCall、StaticCall、Create的过程中：EVM.Create —> StateDB.Snapshot
+// 2.应用交易的过程：Work.commitTransaction —> StateDB.Snapshot
 func (self *StateDB) Snapshot() int {
+	// 首先获取快照id，从0开始计数
 	id := self.nextRevisionId
 	self.nextRevisionId++
+	// 然后将快照保存，即reversion{id, journal.length}
 	self.validRevisions = append(self.validRevisions, revision{id, self.journal.length()})
 	return id
 }
 
 // RevertToSnapshot reverts all state changes made since the given revision.
 // 恢复快照
+// ToView
+// 1、检查快照编号是否有效
+// 2、通过快照编号获取日志长度
+// 3、调用日志中的revert函数进行恢复
+// 4、移除恢复点后面的快照
 func (self *StateDB) RevertToSnapshot(revid int) {
 	// Find the snapshot in the stack of valid snapshots.
+	// 找出validReversion[0，n]中最小的下标偏移i，能够满足第二个函数f(i) == true
 	idx := sort.Search(len(self.validRevisions), func(i int) bool {
 		return self.validRevisions[i].id >= revid
 	})
@@ -577,9 +604,14 @@ func (self *StateDB) GetRefund() uint64 {
 
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
+// ToView
 // 将状态写进tire中
+// 遍历更新的账户，将被更新的账户写入状态树，清除变更日志、快照、返利
+// 我们上面分析的所有日志及回滚都是在StateObjects这个map缓存中进行的，一旦这些状态被写进状态树，日志就没用了，不能再回滚了，所以将日志、快照、返利都清除。
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
+	// dirties中记录的是变更过的账户
 	for addr := range s.journal.dirties {
+		// 验证这个账户再stateObjects列表中也存在，如果不存在就跳过这个账户
 		stateObject, exist := s.stateObjects[addr]
 		if !exist {
 			// ripeMD is 'touched' at block 1714175, in tx 0x1237f737031e40bcde4a8b7e717b2d15e3ecadfe49bb1bbc71ee9deb09c6fcf2
@@ -590,13 +622,16 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			// Thus, we can safely ignore it here
 			continue
 		}
-
+		// 如果账户已经销毁，从状态树中删除账户；如果账户为空，且deleteEmptyObjects标志为true，则删除账户
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
 			s.deleteStateObject(stateObject)
 		} else {
+			// 否则将账户的storage变更写入storage树，更新storage树根
 			stateObject.updateRoot(s.db)
+			// 将当前账户写入状态树
 			s.updateStateObject(stateObject)
 		}
+		// 当账户被更新到状态树后，将改动的账户标记为脏账户
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
@@ -606,7 +641,11 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
-// 获得当前状态的树根root hash
+// ToView
+// 更新状态树，同时计算状态树根
+// 调用时机：
+// 1.BlockChain验证一个区块的状态树根是否正确：BlockChain.insertChain —>BlockValidator.ValidateState —>stateDB.intermediateRoot。也就是区块插入规范链时，执行完交易后要验证此时本地的状态树树根与发来的区块头中的是否一致
+// 2.Worker递交工作的过程中执行全部交易后，需要得到状态树根来填充区块头的root：worker.CommitNewWork —> Ethash.Finalize —> stateDB.IntermeidateRoot。因为挖矿之前要先执行交易，还要结算挖矿奖励，然后生成最新的状态。这时候就需要获得状态树树根，放在区块头中，一起打包用于挖矿。
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// false
 	s.Finalise(deleteEmptyObjects)
@@ -628,37 +667,47 @@ func (s *StateDB) clearJournalAndRefund() {
 }
 
 // Commit writes the state to the underlying in-memory trie database.
-// 将状态写入数据库db
+// ToView
+// 将状态树写入数据库db
+// 调用时机：
+// 1.BlockChain调用WriteBlockWithState写区块链的过程中：BlockChain.WriteBlockWithState —>StateDB.Commit
 func (s *StateDB) Commit(deleteEmptyObjects bool) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
-
+	// 遍历日志脏账户，将被更新的账户写入状态树（因为我们只需要重写那些改动了的账户，没有改动的账户不需要处理）
 	for addr := range s.journal.dirties {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Commit objects to the trie.
+	// 遍历被更新的账户，将被更新的账户写入状态树
 	for addr, stateObject := range s.stateObjects {
 		_, isDirty := s.stateObjectsDirty[addr]
 		switch {
 		case stateObject.suicided || (isDirty && deleteEmptyObjects && stateObject.empty()):
 			// If the object has been removed, don't bother syncing it
 			// and just mark it for deletion in the trie.
+			// 如果账户标记为销毁，则从状态树中删除之
+			// 如果账户为空，且deleteEmptyObjects标志为true，从状态树中删除账户
 			s.deleteStateObject(stateObject)
 		case isDirty:
 			// Write any contract code associated with the state object
+			// 如果有代码更新，则将code以codeHash为key，以code为value存入db数据库
 			if stateObject.code != nil && stateObject.dirtyCode {
 				s.db.TrieDB().InsertBlob(common.BytesToHash(stateObject.CodeHash()), stateObject.code)
 				stateObject.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie.
+			// 更新storage树
 			if err := stateObject.CommitTrie(s.db); err != nil {
 				return common.Hash{}, err
 			}
 			// Update the object in the main account trie.
+			// 更新状态树
 			s.updateStateObject(stateObject)
 		}
 		delete(s.stateObjectsDirty, addr)
 	}
 	// Write trie changes.
+	// 将状态树写入数据库
 	root, err = s.trie.Commit(func(leaf []byte, parent common.Hash) error {
 		var account Account
 		if err := rlp.DecodeBytes(leaf, &account); err != nil {

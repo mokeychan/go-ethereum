@@ -38,7 +38,7 @@ type journalEntry interface {
 // exception or revertal request.
 type journal struct {
 	entries []journalEntry         // Current changes tracked by the journal
-	dirties map[common.Address]int // Dirty accounts and the number of changes
+	dirties map[common.Address]int // Dirty accounts and the number of changes // 记录了变动的账户及账户变动的次数
 }
 
 // newJournal create a new initialized journal.
@@ -134,7 +134,9 @@ type (
 	}
 )
 
+// createObjectChange的实现，revert传入了stateDB
 func (ch createObjectChange) revert(s *StateDB) {
+	// 从stateObjects和stateObjectsDirty中把刚才createObject生成的stateObject给删除掉，这就是一个反向操作。
 	delete(s.stateObjects, *ch.account)
 	delete(s.stateObjectsDirty, *ch.account)
 }
@@ -143,7 +145,9 @@ func (ch createObjectChange) dirtied() *common.Address {
 	return ch.account
 }
 
+// resetObjectChange的实现，revert传入了stateDB
 func (ch resetObjectChange) revert(s *StateDB) {
+	// 将StateObjcet设置成之前的对象
 	s.setStateObject(ch.prev)
 }
 
