@@ -105,7 +105,9 @@ type cachingDB struct {
 	codeSizeCache *lru.Cache
 }
 
-// 从缓存里面查找。如果找到了返回缓存的trie的copy， 否则重新构建一颗树返回。
+// 从db中打开一个trie，如果不是最近使用过，则创建一个新的，存到db
+// OpenTrie创建的stateDB的Trie
+// 注意与OpenStorageTrie()的区别。
 // OpenTrie opens the main account trie.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 	db.mu.Lock()
@@ -135,7 +137,12 @@ func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 	}
 }
 
+// cachingDB会缓存stateDB使用的Trie，而不会缓存stateObject使用的Trie。
+
 // OpenStorageTrie opens the storage trie of an account.
+// 直接创建一个
+// 创建的是stateObject的Trie
+// 创建一个账户的存储trie，但实际没有使用到addrHash
 func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash) (Trie, error) {
 	return trie.NewSecure(root, db.db, 0)
 }

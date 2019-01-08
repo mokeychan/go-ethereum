@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
+// 主要实现最小状态的存储和修改
+// stateObject代表最小粒度的状态，它是一个账户的状态信息。我们
 package state
 
 import (
@@ -72,22 +74,27 @@ type stateObject struct {
 	// unable to deal with database-level errors. Any error that occurs
 	// during a database read is memoized here and will eventually be returned
 	// by StateDB.Commit.
-	// VM不处理db层的错误，先记录下来，最后返回，只能保存1个错误，保存存的第一个错误
+	// EVM不处理db层的错误，先记录下来，最后返回，只能保存1个错误，保存存的第一个错误
 	dbErr error
 
 	// Write caches.
-	trie Trie // storage trie, which becomes non-nil on first access 使用trie组织stateObject的数据
-	code Code // contract bytecode, which gets set when code is loaded 合约代码
+	// 使用trie组织stateObj的数据
+	trie Trie // storage trie, which becomes non-nil on first access
+	// 合约代码
+	code Code // contract bytecode, which gets set when code is loaded
 
+	// 存缓存，避免重复从数据库读
 	originStorage Storage // Storage cache of original entries to dedup rewrites
-	dirtyStorage  Storage // Storage entries that need to be flushed to disk
+	// 需要写到磁盘的缓存
+	dirtyStorage Storage // Storage entries that need to be flushed to disk
 
 	// Cache flags.
 	// When an object is marked suicided it will be delete from the trie
 	// during the "update" phase of the state transition.
 	dirtyCode bool // true if the code was updated
-	suicided  bool
-	deleted   bool
+	// 标记suicided，代表这个对象要从trie删除，在update阶段
+	suicided bool
+	deleted  bool
 }
 
 // empty returns whether the account is considered empty.
@@ -105,8 +112,12 @@ type Account struct {
 	CodeHash []byte      // 合约代码的hash值(合约帐户特有)
 }
 
+// stateObject保存了2个重要信息：
+// 1.账户的信息：Account、Address、Code。创建账户之后，这些数据就不变了。
+// 2.账户的数据：trie。对于合约账户，trie用来存储数据，因此trie是经常变化的。比如，有新的转账交易，就有新的数据(余额)产生和改变，trie也就发生改变。
+
 // newObject creates a state object.
-// stateObject 表示一个帐户的状态，可以更新修改
+// 使用地址和账户创建stateObject
 func newObject(db *StateDB, address common.Address, data Account) *stateObject {
 	if data.Balance == nil {
 		data.Balance = new(big.Int)
@@ -151,6 +162,7 @@ func (c *stateObject) touch() {
 	}
 }
 
+// 获取当前账户的trie，如果没有，则创建一个空的
 func (c *stateObject) getTrie(db Database) Trie {
 	if c.trie == nil {
 		var err error
@@ -199,6 +211,8 @@ func (self *stateObject) GetCommittedState(db Database, key common.Hash) common.
 }
 
 // SetState updates a value in account storage.
+// 设置一个新的kv：保存过去的kv，然后设置新的
+// 设置trie中的kv数据对，能够完成创建、更新、删除功能
 func (self *stateObject) SetState(db Database, key, value common.Hash) {
 	// If the new value is the same as old, don't set
 	prev := self.GetState(db, key)
@@ -214,11 +228,14 @@ func (self *stateObject) SetState(db Database, key, value common.Hash) {
 	self.setState(key, value)
 }
 
+// 先加入dirty
 func (self *stateObject) setState(key, value common.Hash) {
 	self.dirtyStorage[key] = value
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
+// (从db中)更新trie，把账户中修改过的数据写入到trie。
+// 把标记为dirty的kv写入、删除、更新到存储trie、
 func (self *stateObject) updateTrie(db Database) Trie {
 	tr := self.getTrie(db)
 	for key, value := range self.dirtyStorage {
@@ -242,6 +259,7 @@ func (self *stateObject) updateTrie(db Database) Trie {
 }
 
 // UpdateRoot sets the trie root to the current root hash of
+// 更新root：更新trie，然后获取新的root。Finalize使用
 func (self *stateObject) updateRoot(db Database) {
 	self.updateTrie(db)
 	self.data.Root = self.trie.Hash()

@@ -114,8 +114,7 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	if config.IsByzantium(header.Number) {
 		statedb.Finalise(true)
 	} else {
-		// 获取(变化后的状态树的)树根
-		// TODO
+		// 更新状态树并获取(变化后的状态树的)树根
 		root = statedb.IntermediateRoot(config.IsEIP158(header.Number)).Bytes()
 	}
 	*usedGas += gas

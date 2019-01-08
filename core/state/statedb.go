@@ -15,6 +15,10 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package state provides a caching layer atop the Ethereum state trie.
+// 1.存储所有的账户信息（stateObject）。
+// 2.提供增删、修改账户的状态数据（stateObject）的接口。
+// 3.Finalise和提交修改的账户信息（stateObject）。
+// 4.对每个状态数据改变记录日志，创建快照，实现回滚。
 package state
 
 import (
@@ -56,14 +60,19 @@ func (n *proofList) Put(key []byte, value []byte) error {
 // nested states. It's the general query interface to retrieve:
 // * Contracts
 // * Accounts
+// 在merkle树种保存任何数据，形式是kv
 // stateObject存储在stateDB中，stateDB(一级缓存)存储在trie上，tire作为二级缓存，tire存在在db中(三级缓存)，保存在链上。
 type StateDB struct {
-	db   Database // 底层的数据库db
-	trie Trie     // 所属树
+	// 存储本Trie的数据库
+	db Database
+	// 存储所有的stateObject
+	trie Trie
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
-	stateObjects      map[common.Address]*stateObject // 包含的stateObject（是否可以理解成零级缓存?!）
-	stateObjectsDirty map[common.Address]struct{}     // "脏账户"，就是在StateDB中，账户已经被修改了，但是状态树中的值还没有修改，这些账户就被存到stateObjectsDirty中
+	// 最近使用过的数据对象，他们的账户地址为key
+	stateObjects map[common.Address]*stateObject // 包含的stateObject（是否可以理解成零级缓存?!）
+	// 修改过的账户对象
+	stateObjectsDirty map[common.Address]struct{} // "脏账户"，就是在StateDB中，账户已经被修改了，但是状态树中的值还没有修改，这些账户就被存到stateObjectsDirty中
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
@@ -84,6 +93,7 @@ type StateDB struct {
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
+	// 快照和回滚的主要参数
 	journal        *journal   // 日志 存的是账户变动的反向操作 这对以太坊实现快照功能以及回滚世界状态非常有用。
 	validRevisions []revision // validRevisions是一个revision的切片，后者存的是日志（journal）的索引
 	// 如何回滚快照
@@ -398,6 +408,7 @@ func (self *StateDB) Suicide(addr common.Address) bool {
 //
 
 // updateStateObject writes the given object to the trie.
+// 把对象RLP编码，然后写到trie
 func (self *StateDB) updateStateObject(stateObject *stateObject) {
 	addr := stateObject.Address()
 	data, err := rlp.EncodeToBytes(stateObject)
@@ -415,6 +426,8 @@ func (self *StateDB) deleteStateObject(stateObject *stateObject) {
 }
 
 // Retrieve a state object given by the address. Returns nil if not found.
+// stateDB中使用trie保存addr到stateObject的映射，stateObject中保存key到value的映射
+// 先从stateObjects中读取，否则从Trie读取Account，然后创建stateObject，存到stateObjects
 func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObject) {
 	// Prefer 'live' objects.
 	if obj := self.stateObjects[addr]; obj != nil {
@@ -430,6 +443,7 @@ func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObje
 		self.setError(err)
 		return nil
 	}
+	// trie中实际实际保存的是Account
 	var data Account
 	if err := rlp.DecodeBytes(enc, &data); err != nil {
 		log.Error("Failed to decode state object", "addr", addr, "err", err)
@@ -446,6 +460,7 @@ func (self *StateDB) setStateObject(object *stateObject) {
 }
 
 // Retrieve a state object or create a new state object if nil.
+// 获取stateObject，不存在则创建
 func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 	stateObject := self.getStateObject(addr)
 	if stateObject == nil || stateObject.deleted {
@@ -456,7 +471,7 @@ func (self *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten and returned as the second return value.
-// 创建一个stateObject(新账户-)
+// 创建一个stateObject，对账户数据进行初始化，然后记录日志
 func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) {
 	// 先看下这个地址之前的账户状态，如果有就不用新建账户
 	prev = self.getStateObject(addr)
@@ -487,6 +502,7 @@ func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObjec
 //   2. tx_create(sha(account ++ nonce)) (note that this gets the address of 1)
 //
 // Carrying over the balance ensures that Ether doesn't disappear.
+// 创建一个新的空账户，如果存在该地址的旧账户，则把旧地址中的余额，放到新账户中
 func (self *StateDB) CreateAccount(addr common.Address) {
 	new, prev := self.createObject(addr)
 	if prev != nil {
@@ -608,10 +624,14 @@ func (self *StateDB) GetRefund() uint64 {
 // 将状态写进tire中
 // 遍历更新的账户，将被更新的账户写入状态树，清除变更日志、快照、返利
 // 我们上面分析的所有日志及回滚都是在StateObjects这个map缓存中进行的，一旦这些状态被写进状态树，日志就没用了，不能再回滚了，所以将日志、快照、返利都清除。
+// 使用场景：
+// 1.执行交易/合约，进行一次状态转移。
+// 2.给矿工计算奖励后，进行一次状态转移。
+// TODO
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	// dirties中记录的是变更过的账户
 	for addr := range s.journal.dirties {
-		// 验证这个账户再stateObjects列表中也存在，如果不存在就跳过这个账户
+		// 验证这个账户是否存在于stateObjects列表中，如果不存在就跳过这个账户
 		stateObject, exist := s.stateObjects[addr]
 		if !exist {
 			// ripeMD is 'touched' at block 1714175, in tx 0x1237f737031e40bcde4a8b7e717b2d15e3ecadfe49bb1bbc71ee9deb09c6fcf2
@@ -622,11 +642,12 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			// Thus, we can safely ignore it here
 			continue
 		}
-		// 如果账户已经销毁，从状态树中删除账户；如果账户为空，且deleteEmptyObjects标志为true，则删除账户
+		// 如果账户已经自杀/账户为空且deleteEmptyObjects标志为true，则删除账户(stateobject)
 		if stateObject.suicided || (deleteEmptyObjects && stateObject.empty()) {
 			s.deleteStateObject(stateObject)
 		} else {
-			// 否则将账户的storage变更写入storage树，更新storage树根
+			// 否则将账户的storage变更写入storage树
+			// 更新树根
 			stateObject.updateRoot(s.db)
 			// 将当前账户写入状态树
 			s.updateStateObject(stateObject)
@@ -635,19 +656,20 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
+	// 删除日志（此处可以理解为交易的回滚有事务的特征，不能跨交易，就是说这条交易失败了，不能回滚到上上条交易）
 	s.clearJournalAndRefund()
 }
 
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
-// ToView
-// 更新状态树，同时计算状态树根
+// 更新状态树（将状态写入树中），同时计算状态树根
 // 调用时机：
 // 1.BlockChain验证一个区块的状态树根是否正确：BlockChain.insertChain —>BlockValidator.ValidateState —>stateDB.intermediateRoot。也就是区块插入规范链时，执行完交易后要验证此时本地的状态树树根与发来的区块头中的是否一致
-// 2.Worker递交工作的过程中执行全部交易后，需要得到状态树根来填充区块头的root：worker.CommitNewWork —> Ethash.Finalize —> stateDB.IntermeidateRoot。因为挖矿之前要先执行交易，还要结算挖矿奖励，然后生成最新的状态。这时候就需要获得状态树树根，放在区块头中，一起打包用于挖矿。
+// 2.Worker递交工作的过程中执行全部交易后，需要得到状态树根来填充区块头的root：worker.CommitNewWork —> Ethash.Finalize —> stateDB.IntermeidateRoot。因为挖矿之前要先执行交易，还要结算挖矿奖励，然后生成最新的状态（ApplyTransaction返回交易凭据）。这时候就需要获得状态树树根，放在区块头中，一起打包用于挖矿。
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// false
+	// 更新状态树
 	s.Finalise(deleteEmptyObjects)
 	return s.trie.Hash()
 }
@@ -668,9 +690,10 @@ func (s *StateDB) clearJournalAndRefund() {
 
 // Commit writes the state to the underlying in-memory trie database.
 // ToView
-// 将状态树写入数据库db
+// 将状态树tire写入数据库db（即写入区块链）
 // 调用时机：
-// 1.BlockChain调用WriteBlockWithState写区块链的过程中：BlockChain.WriteBlockWithState —>StateDB.Commit
+// 1.自己挖到区块。
+// 2.收到他人的区块。
 func (s *StateDB) Commit(deleteEmptyObjects bool) (root common.Hash, err error) {
 	defer s.clearJournalAndRefund()
 	// 遍历日志脏账户，将被更新的账户写入状态树（因为我们只需要重写那些改动了的账户，没有改动的账户不需要处理）
