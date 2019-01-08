@@ -15,7 +15,7 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // 主要实现最小状态的存储和修改
-// stateObject代表最小粒度的状态，它是一个账户的状态信息。我们
+// stateObject代表最小粒度的状态，它是一个账户的状态信息。
 package state
 
 import (
@@ -342,6 +342,7 @@ func (c *stateObject) Address() common.Address {
 }
 
 // Code returns the contract code associated with this object, if any.
+// 从db读取合约代码，db实际是stateDB.db
 func (self *stateObject) Code(db Database) []byte {
 	if self.code != nil {
 		return self.code

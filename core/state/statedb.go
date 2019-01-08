@@ -577,6 +577,7 @@ func (self *StateDB) Copy() *StateDB {
 
 // Snapshot returns an identifier for the current revision of the state.
 // 拍摄快照
+// 快照只是一个id，把id和日志的长度关联起来，存到Revisions中
 // ToView
 // 调用时机：
 // 1.EVM调用Call、CallCode、DelegateCall、StaticCall、Create的过程中：EVM.Create —> StateDB.Snapshot
@@ -591,7 +592,7 @@ func (self *StateDB) Snapshot() int {
 }
 
 // RevertToSnapshot reverts all state changes made since the given revision.
-// 恢复快照
+// 回滚到指定的快照
 // ToView
 // 1、检查快照编号是否有效
 // 2、通过快照编号获取日志长度
@@ -609,6 +610,7 @@ func (self *StateDB) RevertToSnapshot(revid int) {
 	snapshot := self.validRevisions[idx].journalIndex
 
 	// Replay the journal to undo changes and remove invalidated snapshots
+	// 反操作后续的操作，达到回滚的目的
 	self.journal.revert(self, snapshot)
 	self.validRevisions = self.validRevisions[:idx]
 }
@@ -617,6 +619,8 @@ func (self *StateDB) RevertToSnapshot(revid int) {
 func (self *StateDB) GetRefund() uint64 {
 	return self.refund
 }
+
+// Finalise和Commit是和存储过程紧密关联的2个函数，Finalise代表修改过的状态已经进入“终态”，Commit代表所有的状态都写入到数据库
 
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
@@ -630,6 +634,7 @@ func (self *StateDB) GetRefund() uint64 {
 // TODO
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	// dirties中记录的是变更过的账户
+	// 只处理journal中标记为dirty的对象，不处理stateObjectsDirty中的对象
 	for addr := range s.journal.dirties {
 		// 验证这个账户是否存在于stateObjects列表中，如果不存在就跳过这个账户
 		stateObject, exist := s.stateObjects[addr]
@@ -656,7 +661,8 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
-	// 删除日志（此处可以理解为交易的回滚有事务的特征，不能跨交易，就是说这条交易失败了，不能回滚到上上条交易）
+	// 删除过时的日志（此处可以理解为交易的回滚有事务的特征，不能跨交易，就是说这条交易失败了，不能回滚到上上条交易）
+	// 清空journal，revision，不能再回滚
 	s.clearJournalAndRefund()
 }
 
@@ -690,17 +696,20 @@ func (s *StateDB) clearJournalAndRefund() {
 
 // Commit writes the state to the underlying in-memory trie database.
 // ToView
-// 将状态树tire写入数据库db（即写入区块链）
+// 将状态树tire写入数据库db（即写入区块链），与Finalize不同，这里处理的是Dirty的对象
 // 调用时机：
 // 1.自己挖到区块。
 // 2.收到他人的区块。
 func (s *StateDB) Commit(deleteEmptyObjects bool) (root common.Hash, err error) {
+	// 清空journal无法再回滚
 	defer s.clearJournalAndRefund()
+	// 把journal中dirties的对象，加入到stateObjectsDirty
 	// 遍历日志脏账户，将被更新的账户写入状态树（因为我们只需要重写那些改动了的账户，没有改动的账户不需要处理）
 	for addr := range s.journal.dirties {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Commit objects to the trie.
+	// 遍历所有活动/修改过的对象
 	// 遍历被更新的账户，将被更新的账户写入状态树
 	for addr, stateObject := range s.stateObjects {
 		_, isDirty := s.stateObjectsDirty[addr]
@@ -713,32 +722,42 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (root common.Hash, err error) 
 			s.deleteStateObject(stateObject)
 		case isDirty:
 			// Write any contract code associated with the state object
+			// tips: stateObject.Code并没有保存在stateObject.trie中，而是保存在stateDB.trie中。
+			// 所以调用stateObject.Code获取合约代码的时候，实际传入的是stateDB.db，cachingDB.ContractCode实际也不使用合约的地址，因为(CodeHash, Code)本身就是作为KV存放在Trie中。
+			// ..
+			// 把修改过的合约代码写到数据库，这个用法高级，直接把数据库拿过来，插进去
+			// 注意：这里写入的DB是stateDB的数据库，因为stateObject的Trie只保存Account信息
 			// 如果有代码更新，则将code以codeHash为key，以code为value存入db数据库
 			if stateObject.code != nil && stateObject.dirtyCode {
 				s.db.TrieDB().InsertBlob(common.BytesToHash(stateObject.CodeHash()), stateObject.code)
 				stateObject.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie.
-			// 更新storage树
+			// 对象提交：把任何改变的存储数据写到数据库
 			if err := stateObject.CommitTrie(s.db); err != nil {
 				return common.Hash{}, err
 			}
 			// Update the object in the main account trie.
+			// 把修改后的对象，编码后写入到stateDB的trie中
 			// 更新状态树
 			s.updateStateObject(stateObject)
 		}
 		delete(s.stateObjectsDirty, addr)
 	}
 	// Write trie changes.
+	// stateDB的提交
 	// 将状态树写入数据库
 	root, err = s.trie.Commit(func(leaf []byte, parent common.Hash) error {
 		var account Account
 		if err := rlp.DecodeBytes(leaf, &account); err != nil {
 			return nil
 		}
+		// 如果叶子节点的trie不空，则trie关联到父节点
 		if account.Root != emptyState {
+			// TOVIEW
 			s.db.TrieDB().Reference(account.Root, parent)
 		}
+		// 如果叶子节点的code不空（合约账户），则把code关联到父节点
 		code := common.BytesToHash(account.CodeHash)
 		if code != emptyCode {
 			s.db.TrieDB().Reference(code, parent)
