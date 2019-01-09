@@ -129,12 +129,16 @@ type TxPoolConfig struct {
 	Rejournal time.Duration    // Time interval to regenerate the local transaction journal 重新生成本地交易日志的时间间隔 (默认: 1小时)
 
 	PriceLimit uint64 // Minimum gas price to enforce for acceptance into the pool 加入交易池的最小的gas价格限制(默认: 1)
-	PriceBump  uint64 // Minimum price bump percentage to replace an already existing transaction (nonce) 价格波动百分比（相对之前已有交易） (默认: 10)
-
+	// PriceBump：如果出现两个nonce相同的交易，gas price的差值超过该阈值则用新交易替换老交易
+	PriceBump uint64 // Minimum price bump percentage to replace an already existing transaction (nonce) 价格波动百分比（相对之前已有交易） (默认: 10)
+	// AccountSlots：pending中每个账户存储的交易数的阈值，超过这个数量可能会被认为是垃圾交易或者是攻击者，多余交易可能被丢弃
 	AccountSlots uint64 // Number of executable transaction slots guaranteed per account 每个帐户保证可执行的最少交易槽数量  (默认: 16)
-	GlobalSlots  uint64 // Maximum number of executable transaction slots for all accounts 所有帐户可执行的最大交易槽数量 (默认: 4096)
+	// GlobalSlots：pending列表的最大长度，默认4096笔
+	GlobalSlots uint64 // Maximum number of executable transaction slots for all accounts 所有帐户可执行的最大交易槽数量 (默认: 4096)
+	// AccountQueue：queue中每个账户允许存储的最大交易数，超过会被丢弃，默认64笔
 	AccountQueue uint64 // Maximum number of non-executable transaction slots permitted per account 每个帐户允许的最多非可执行交易槽数量 (默认: 64)
-	GlobalQueue  uint64 // Maximum number of non-executable transaction slots for all accounts 所有帐户非可执行交易最大槽数量  (默认: 1024)
+	// GlobalQueue：queue列表的最大长度，默认1024笔
+	GlobalQueue uint64 // Maximum number of non-executable transaction slots for all accounts 所有帐户非可执行交易最大槽数量  (默认: 1024)
 
 	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued 非可执行交易最大入队时间(默认: 3小时)
 }
@@ -680,6 +684,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 		// Nonce already pending, check if required price bump is met
 		inserted, old := list.Add(tx, pool.config.PriceBump)
 		if !inserted {
+			// 旧的交易更好哦
 			pendingDiscardCounter.Inc(1)
 			return false, ErrReplaceUnderpriced
 		}
