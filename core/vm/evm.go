@@ -248,7 +248,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			contract.UseGas(contract.Gas)
 		}
 	}
-	// 跟踪错误
+	// 抛出错误
 	return ret, contract.Gas, err
 }
 

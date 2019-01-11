@@ -88,9 +88,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // 执行交易并返回凭证数据
 // 返回交易的凭据，gas消耗，可能造成失败的错误
 func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error) {
-	//
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
+		// ErrInvalidChainId
 		return nil, 0, err
 	}
 	// Create a new context to be used in the EVM environment
@@ -102,13 +102,14 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	vmenv := vm.NewEVM(context, statedb, config, cfg)
 	// Apply the transaction to the current state (included in the env)
 	// 通过evm的对象来执行Message
-	// ApplyMessage
+	// ApplyMessage 如果evm有错，则failed为true
 	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
-	// 如果执行交易的时候返回了错误，就返回没凭据，0消耗，错误
+	// 如果是之前gas的错误就没凭据咯
 	if err != nil {
+		// ErrNonceTooHigh ErrNonceTooLow errInsufficientBalanceForGas ErrGasLimitReached ErrOutOfGas ErrInsufficientBalance
 		return nil, 0, err
 	}
-	// 没有错误就成功了=>更新状态
+	// 更新状态
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
@@ -121,17 +122,19 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	// 创建交易凭据
+	// 执行完交易，开始创建回执
 	receipt := types.NewReceipt(root, failed, *usedGas)
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = gas
 	// if the transaction created a contract, store the creation address in the receipt.
 	if msg.To() == nil {
+		// 如果是创建合约的交易，就存储创建合约的地址加入到回执中
 		receipt.ContractAddress = crypto.CreateAddress(vmenv.Context.Origin, tx.Nonce())
 	}
 	// Set the receipt logs and create a bloom for filtering
-	receipt.Logs = statedb.GetLogs(tx.Hash())                  // 日志数据是EVM执行指令代码的时候产生
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt}) // 根据日志数据建立bloom过滤器
-	// err is nil
+	// 设置凭证的日志，并根据凭证的日志创建布隆过滤器
+	receipt.Logs = statedb.GetLogs(tx.Hash())
+	// 布隆过滤器是以太坊用来快速的查找log,具体后面再研究
+	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	return receipt, gas, err
 }

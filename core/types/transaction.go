@@ -386,6 +386,7 @@ func (t *TransactionsByPriceAndNonce) Shift() {
 // Pop removes the best transaction, *not* replacing it with the next one from
 // the same account. This should be used when a transaction cannot be executed
 // and hence all subsequent ones should be discarded from the same account.
+// 移除交易
 func (t *TransactionsByPriceAndNonce) Pop() {
 	heap.Pop(&t.heads)
 }

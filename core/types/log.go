@@ -35,6 +35,7 @@ type Log struct {
 	// list of topics provided by the contract.
 	Topics []common.Hash `json:"topics" gencodec:"required"`
 	// supplied by the contract, usually ABI-encoded
+	// to do something
 	Data []byte `json:"data" gencodec:"required"`
 
 	// Derived fields. These fields are filled in by the node

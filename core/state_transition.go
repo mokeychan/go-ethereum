@@ -169,9 +169,9 @@ func (st *StateTransition) buyGas() error {
 	return nil
 }
 
-// 进行nonce的检查
 func (st *StateTransition) preCheck() error {
 	// Make sure this transaction's nonce is correct.
+	// 进行nonce的检查
 	if st.msg.CheckNonce() {
 		nonce := st.state.GetNonce(st.msg.From())
 		if nonce < st.msg.Nonce() {
@@ -188,8 +188,9 @@ func (st *StateTransition) preCheck() error {
 // returning the result including the used gas. It returns an error if failed.
 // An error indicates a consensus issue.
 func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bool, err error) {
-	// 先检查Gas
+	// 先检查Nonce,Gas,并先扣除gas(gasLimit*gasPrice)
 	if err = st.preCheck(); err != nil {
+		// ErrNonceTooHigh ErrNonceTooLow errInsufficientBalanceForGas ErrGasLimitReached
 		return
 	}
 	msg := st.msg
@@ -202,9 +203,11 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 	// 通过计算消息的大小以及是否是合约创建交易，来计算此次交易需消耗的gas。
 	gas, err := IntrinsicGas(st.data, contractCreation, homestead)
 	if err != nil {
+		// ErrOutOfGas
 		return nil, 0, false, err
 	}
 	if err = st.useGas(gas); err != nil {
+		// ErrOutOfGas
 		return nil, 0, false, err
 	}
 
@@ -223,10 +226,10 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		// Increment the nonce for the next transaction
 		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
 		// 执行合约
-		// 返回ret gas err
+		// 返回ret gas vmerr
 		ret, st.gas, vmerr = evm.Call(sender, st.to(), st.data, st.gas, st.value)
 	}
-	// （之前已经回滚了快照）如果执行合约出现了错误
+	// 如果执行合约出现了错误（之前已经回滚了快照）
 	if vmerr != nil {
 		log.Debug("VM returned with error", "err", vmerr)
 		// The only possible consensus-error would be if there wasn't
@@ -235,16 +238,17 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		// insufficient balance for transfer
 		// 如果转账的余额不足，只返回错误
 		if vmerr == vm.ErrInsufficientBalance {
+			// ErrInsufficientBalance
 			return nil, 0, false, vmerr
 		}
 	}
 	// StateTransaction
 	// 之前多扣的gas总数，还给交易账户from
 	st.refundGas()
-	// 计算合约产生的gas总数，加入到矿工账户coinbase，以作为奖励
+	// 计算合约产生的gas总数，作为奖励加入到矿工账户coinbase
 	st.state.AddBalance(st.evm.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
 
-	// 结果继续往上抛 跟踪
+	// 结果继续往上抛 跟踪, err 为计算gas是可能出现的错误，不是vmerr
 	return ret, st.gasUsed(), vmerr != nil, err
 }
 

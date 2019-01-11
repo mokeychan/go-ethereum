@@ -703,17 +703,22 @@ func (w *worker) updateSnapshot() {
 	w.snapshotState = w.current.state.Copy()
 }
 
+// 执行交易
 func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Address) ([]*types.Log, error) {
+	// 拍摄快照
 	snap := w.current.state.Snapshot()
 
 	receipt, _, err := core.ApplyTransaction(w.config, w.chain, &coinbase, w.current.gasPool, w.current.state, w.current.header, tx, &w.current.header.GasUsed, *w.chain.GetVMConfig())
 	if err != nil {
+		// 有错(gas的错)就回滚快照
 		w.current.state.RevertToSnapshot(snap)
 		return nil, err
 	}
+	// 将交易、凭证(或者叫回执或者叫收据)放入当前挖矿的环境中
 	w.current.txs = append(w.current.txs, tx)
 	w.current.receipts = append(w.current.receipts, receipt)
 
+	// 返回回执的日志
 	return receipt.Logs, nil
 }
 
@@ -774,18 +779,24 @@ func (w *worker) commitTransactions(txs *types.TransactionsByPriceAndNonce, coin
 			continue
 		}
 		// Start executing the transaction
-		w.current.state.Prepare(tx.Hash(), common.Hash{}, w.current.tcount)
-
+		// commit transaction
+		// 共识、打包出块--执行交易前 root :=  w.current.state.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
 		logs, err := w.commitTransaction(tx, coinbase)
+		// 共识、打包出块--执行交易后
+		// commitTransaction过程中可能的错误
+		// ErrInvalidChainId ErrNonceTooHigh ErrNonceTooLow errInsufficientBalanceForGas ErrGasLimitReached ErrOutOfGas ErrInsufficientBalance
 		switch err {
 		case core.ErrGasLimitReached:
 			// Pop the current out-of-gas transaction without shifting in the next from the account
 			log.Trace("Gas limit exceeded for current block", "sender", from)
+			// 移除交易
 			txs.Pop()
 
 		case core.ErrNonceTooLow:
 			// New head notification data race between the transaction pool and miner, shift
 			log.Trace("Skipping transaction with low nonce", "sender", from, "nonce", tx.Nonce())
+			// nonce的堆排序（小顶堆），nonce值按照从大到小排列
+			// TODO
 			txs.Shift()
 
 		case core.ErrNonceTooHigh:
@@ -967,6 +978,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 		*receipts[i] = *l
 	}
 	s := w.current.state.Copy()
+	// to do something
 	block, err := w.engine.Finalize(w.chain, w.current.header, s, w.current.txs, uncles, w.current.receipts)
 	if err != nil {
 		return err

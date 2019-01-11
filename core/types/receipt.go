@@ -83,11 +83,14 @@ type receiptStorageRLP struct {
 }
 
 // NewReceipt creates a barebone transaction receipt, copying the init fields.
+// 创建交易的回执
 func NewReceipt(root []byte, failed bool, cumulativeGasUsed uint64) *Receipt {
 	r := &Receipt{PostState: common.CopyBytes(root), CumulativeGasUsed: cumulativeGasUsed}
 	if failed {
+		// failed为true,表示有evmerr，status为0，evm交易失败
 		r.Status = ReceiptStatusFailed
 	} else {
+		// status为1
 		r.Status = ReceiptStatusSuccessful
 	}
 	return r

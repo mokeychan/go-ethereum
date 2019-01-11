@@ -224,6 +224,7 @@ type TxPool struct {
 
 // NewTxPool creates a new transaction pool to gather, sort and filter inbound
 // transactions from the network.
+// 新建一个交易池
 func NewTxPool(config TxPoolConfig, chainconfig *params.ChainConfig, chain blockChain) *TxPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
