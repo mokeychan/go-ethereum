@@ -271,6 +271,7 @@ func (self *StateDB) GetCodeHash(addr common.Address) common.Hash {
 
 // GetState retrieves a value from the given account's storage trie.
 func (self *StateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
+	// 通过地址获取相应的stateobject
 	stateObject := self.getStateObject(addr)
 	if stateObject != nil {
 		return stateObject.GetState(self.db, hash)
@@ -430,13 +431,14 @@ func (self *StateDB) deleteStateObject(stateObject *stateObject) {
 // 先从stateObjects中读取，否则从Trie读取Account，然后创建stateObject，存到stateObjects
 func (self *StateDB) getStateObject(addr common.Address) (stateObject *stateObject) {
 	// Prefer 'live' objects.
+	// 如果当前缓存中有object（like "live"）
 	if obj := self.stateObjects[addr]; obj != nil {
 		if obj.deleted {
 			return nil
 		}
 		return obj
 	}
-
+	// 否则从树上"尝试"去捞
 	// Load the object from the database.
 	enc, err := self.trie.TryGet(addr[:])
 	if len(enc) == 0 {

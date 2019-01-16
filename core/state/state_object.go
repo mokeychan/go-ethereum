@@ -91,10 +91,11 @@ type stateObject struct {
 	// Cache flags.
 	// When an object is marked suicided it will be delete from the trie
 	// during the "update" phase of the state transition.
+	// 标记stateObject.code被修改了
 	dirtyCode bool // true if the code was updated
 	// 标记suicided，代表这个对象要从trie删除，在update阶段
-	suicided bool
-	deleted  bool
+	suicided bool // 标记上层调用了自杀命令
+	deleted  bool // 标记账户已经从数据库中删除
 }
 
 // empty returns whether the account is considered empty.
