@@ -557,6 +557,7 @@ func (self *StateDB) Copy() *StateDB {
 	// Above, we don't copy the actual journal. This means that if the copy is copied, the
 	// loop above will be a no-op, since the copy's journal is empty.
 	// Thus, here we iterate over stateObjects, to enable copies of copies
+	// 高并发下，容易发生concurrent map iteration and map write
 	for addr := range self.stateObjectsDirty {
 		if _, exist := state.stateObjects[addr]; !exist {
 			state.stateObjects[addr] = self.stateObjects[addr].deepCopy(state)

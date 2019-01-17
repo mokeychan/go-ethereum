@@ -225,7 +225,7 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		// 如果不是新创建的合约，则调用执行合约的方法。同时更新发送方地址nonce值+1
 		// Increment the nonce for the next transaction
 		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
-		// 执行合约
+		// 执行交易
 		// 返回ret gas vmerr
 		ret, st.gas, vmerr = evm.Call(sender, st.to(), st.data, st.gas, st.value)
 	}
