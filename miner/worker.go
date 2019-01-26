@@ -551,7 +551,6 @@ func (w *worker) taskLoop() {
 
 // resultLoop is a standalone goroutine to handle sealing result submitting
 // and flush relative data to the database.
-// resultCh注意挖矿结果通道
 func (w *worker) resultLoop() {
 	for {
 		select {
@@ -591,6 +590,7 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 			// Commit block and state to database.
+			// 将区块和所关联状态写入区块链，同时处理可能发生的分叉
 			stat, err := w.chain.WriteBlockWithState(block, receipts, task.state)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)

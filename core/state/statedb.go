@@ -628,7 +628,7 @@ func (self *StateDB) GetRefund() uint64 {
 // Finalise finalises the state by removing the self destructed objects
 // and clears the journal as well as the refunds.
 // ToView
-// 将状态写进tire中
+// 将状态写进tire中(Finalise方法会调用update方法把存放在cache层的修改写入到trie数据库里面。但是这个时候还没有写入底层的数据库。还没有调用commit，数据还在内存里面，还没有落地成文件。)
 // 遍历更新的账户，将被更新的账户写入状态树，清除变更日志、快照、返利
 // 我们上面分析的所有日志及回滚都是在StateObjects这个map缓存中进行的，一旦这些状态被写进状态树，日志就没用了，不能再回滚了，所以将日志、快照、返利都清除。
 // 使用场景：

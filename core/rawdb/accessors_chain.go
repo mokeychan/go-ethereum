@@ -343,6 +343,7 @@ func ReadBlock(db DatabaseReader, hash common.Hash, number uint64) *types.Block 
 }
 
 // WriteBlock serializes a block into the database, header and body separately.
+// 写入区块 区块头、区块体
 func WriteBlock(db DatabaseWriter, block *types.Block) {
 	WriteBody(db, block.Hash(), block.NumberU64(), block.Body())
 	WriteHeader(db, block.Header())

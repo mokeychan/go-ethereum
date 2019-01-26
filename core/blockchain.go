@@ -924,11 +924,16 @@ func (bc *BlockChain) WriteBlockWithoutState(block *types.Block, td *big.Int) (e
 }
 
 // WriteBlockWithState writes the block and all associated state to the database.
+// 能够执行到WriteBlockWithState这个函数，说明区块本身是被验证过的没有问题，所以这个方法一定能将区块写入数据库。
+// 但是能不能写入规范链，需要进一步判断，假设写入的是规范链，是在原有规范链基础是追加一个呢?
+// 还是将数据库中的一个分叉升级成规范链呢? 这个也要进一步判断（比较当前待插入区块的总难度和规范链头区块的总难度）。
+// 所以WriteBlockWithState方法将区块写入区块链的同时还会处理可能的分叉。
 func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB) (status WriteStatus, err error) {
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
 	// Calculate the total difficulty of the block
+	// 计算当前区块的总难度
 	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 	if ptd == nil {
 		return NonStatTy, consensus.ErrUnknownAncestor
@@ -945,8 +950,10 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 	if err := bc.hc.WriteTd(block.Hash(), block.NumberU64(), externTd); err != nil {
 		return NonStatTy, err
 	}
+	// 写入区块到数据库
 	rawdb.WriteBlock(bc.db, block)
 
+	// 调用statedb commit方法
 	root, err := state.Commit(bc.chainConfig.IsEIP158(block.Number()))
 	if err != nil {
 		return NonStatTy, err
