@@ -42,14 +42,15 @@ type Backend interface {
 // Miner creates blocks and searches for proof-of-work values.
 type Miner struct {
 	mux      *event.TypeMux   // 事件锁
-	worker   *worker          // worker 产生块的对象
-	coinbase common.Address   // 矿工地址(节点地址)
-	eth      Backend          // Backend对象，Backend是一个自定义接口封装了所有挖矿所需方法
+	worker   *worker          // worker模块，用于支持主要的挖矿流程
+	coinbase common.Address   // 矿工地址
+	eth      Backend          // Backend对象，Backend是一个自定义接口封装了所有挖矿所需方法(以太坊命令终端)
 	engine   consensus.Engine // 共识引擎
 	exitCh   chan struct{}    // 停止挖矿的channel
 
-	canStart    int32 // can start indicates whether we can start the mining operation 是否能够开始挖矿操作
-	shouldStart int32 // should start indicates whether we should start after sync 同步后是否应该开始挖矿
+	// 两个调控Miner模块是否运行的开关
+	canStart    int32 // can start indicates whether we can start the mining operation
+	shouldStart int32 // should start indicates whether we should start after sync
 }
 
 // 挖矿开始前需要创建新的miner
@@ -96,6 +97,7 @@ func (self *Miner) update() {
 					atomic.StoreInt32(&self.shouldStart, 1)
 					log.Info("Mining aborted due to sync")
 				}
+			// 当监听到downloader的DoneEvent事件或者FailedEvent事件
 			case downloader.DoneEvent, downloader.FailedEvent:
 				// 判断shouldStart是否打开
 				shouldStart := atomic.LoadInt32(&self.shouldStart) == 1

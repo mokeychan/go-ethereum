@@ -115,6 +115,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		config.MinerGasPrice = new(big.Int).Set(DefaultConfig.MinerGasPrice)
 	}
 	// Assemble the Ethereum object
+	// 创建数据库 数据存放路径为chaindata
 	chainDb, err := CreateDB(ctx, config, "chaindata")
 	if err != nil {
 		return nil, err

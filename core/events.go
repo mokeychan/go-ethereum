@@ -22,6 +22,7 @@ import (
 )
 
 // NewTxsEvent is posted when a batch of transactions enter the transaction pool.
+// 当交易进入交易池时，NewTxsEvent事件将会被推送
 type NewTxsEvent struct{ Txs []*types.Transaction }
 
 // PendingLogsEvent is posted pre mining and notifies of pending logs.
