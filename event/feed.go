@@ -36,16 +36,25 @@ var errBadChannel = errors.New("event: Subscribe argument does not have sendable
 // Feed只能被单个类型使用。这个和之前的event不同，event可以使用多个类型。 类型被第一个Send调用或者是Subscribe调用决定。 后续的调用如果类型和其不一致会panic
 // The zero value is ready to use.
 type Feed struct {
-	once      sync.Once        // ensures that init only runs once 保证初始化只被执行一次
-	sendLock  chan struct{}    // sendLock has a one-element buffer and is empty when held.It protects sendCases. 这个锁确保了只有一个协程在使用go routine
+	once sync.Once // ensures that init only runs once 保证初始化只被执行一次
+	// 带有一个缓冲的chan，当被初始化之后，会塞入一个空的结构，用于保护sendCases.
+	sendLock  chan struct{}    // sendLock has a one-element buffer and is empty when held.It protects sendCases.
 	removeSub chan interface{} // interrupts Send 取消订阅
 	sendCases caseList         // the active set of select cases used by Send 发送方的有效case集(订阅的channel列表，这些channel是活跃的)
 
 	// The inbox holds newly subscribed channels until they are added to sendCases.
 	mu     sync.Mutex
-	inbox  caseList     // 事件列表 selectCase list 不活跃的在这里
-	etype  reflect.Type // 事件类型
-	closed bool
+	inbox  caseList     // 事件列表 selectCase list (input channel)
+	etype  reflect.Type // 事件类型（以第一个传进来的事件类型为准）
+	closed bool         // 是否关闭的标志位
+}
+
+// 初始化 初始化会被once来保护保证只会被执行一次。
+func (f *Feed) init() {
+	f.removeSub = make(chan interface{})
+	f.sendLock = make(chan struct{}, 1)
+	f.sendLock <- struct{}{}
+	f.sendCases = caseList{{Chan: reflect.ValueOf(f.removeSub), Dir: reflect.SelectRecv}}
 }
 
 // This is the index of the first actual subscription channel in sendCases.
@@ -61,23 +70,17 @@ func (e feedTypeError) Error() string {
 	return "event: wrong type in " + e.op + " got " + e.got.String() + ", want " + e.want.String()
 }
 
-// 初始化 初始化会被once来保护保证只会被执行一次。
-func (f *Feed) init() {
-	f.removeSub = make(chan interface{})
-	f.sendLock = make(chan struct{}, 1)
-	f.sendLock <- struct{}{}
-	f.sendCases = caseList{{Chan: reflect.ValueOf(f.removeSub), Dir: reflect.SelectRecv}}
-}
-
 // Subscribe adds a channel to the feed. Future sends will be delivered on the channel
 // until the subscription is canceled. All channels added must have the same element type.
 //
 // The channel should have ample buffer space to avoid blocking other subscribers.
 // Slow subscribers are not dropped.
 // 订阅的方法
+// 入参 传输事件的chan
 func (f *Feed) Subscribe(channel interface{}) Subscription {
 	f.once.Do(f.init)
 
+	// 获取channel中的事件类型
 	chanval := reflect.ValueOf(channel)
 	chantyp := chanval.Type()
 	// 如果类型不是channel 或者是 channel的方向不能发送数据，那么错误退出。
@@ -85,11 +88,16 @@ func (f *Feed) Subscribe(channel interface{}) Subscription {
 		panic(errBadChannel)
 	}
 	// 组装feedSub
-	sub := &feedSub{feed: f, channel: chanval, err: make(chan error, 1)}
+	sub := &feedSub{
+		feed:    f,
+		channel: chanval,
+		err:     make(chan error, 1),
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// 只要chan中的event类型与feed不一致，就会panic
+	// feed中的event类型要保持一致，类型是以第一个元素为准的
+	// 只要chan中的event的类型与之前feed.etype不一致，就会panic
 	if !f.typecheck(chantyp.Elem()) {
 		panic(feedTypeError{op: "Subscribe", got: chantyp, want: reflect.ChanOf(reflect.SendDir, f.etype)})
 	}
@@ -106,6 +114,7 @@ func (f *Feed) Subscribe(channel interface{}) Subscription {
 
 // note: callers must hold f.mu
 func (f *Feed) typecheck(typ reflect.Type) bool {
+	// feed中事件的类型etype
 	if f.etype == nil {
 		f.etype = typ
 		return true
@@ -180,6 +189,7 @@ func (f *Feed) Send(value interface{}) (nsent int) {
 		// 使用非阻塞式发送，如果不能发送就及时返回
 		for i := firstSubSendCase; i < len(cases); i++ {
 			// 先尝试着向每个case的chan中去发送数据, 如果不能发送就及时返回
+			// TrySend()以非阻塞的方式 向这些channel发送事件，如果没有立即成功，则阻塞在这些SelectCase里面，等待发送的完成。
 			if cases[i].Chan.TrySend(rvalue) {
 				// 如果发送成功
 				nsent++ // 订阅者数量增加
@@ -219,7 +229,7 @@ func (f *Feed) Send(value interface{}) (nsent int) {
 	return nsent
 }
 
-// 订阅Feed的结构
+// 订阅Feed的结构(feed+subscribe)
 type feedSub struct {
 	feed    *Feed         // 基础Feed
 	channel reflect.Value // channel

@@ -50,7 +50,7 @@ type Miner struct {
 
 	// 两个调控Miner模块是否运行的开关
 	canStart    int32 // can start indicates whether we can start the mining operation
-	shouldStart int32 // should start indicates whether we should start after sync
+	shouldStart int32 // should start indicates whether we should start after sync  0 为关闭
 }
 
 // 挖矿开始前需要创建新的miner
@@ -131,6 +131,7 @@ func (self *Miner) Start(coinbase common.Address) {
 	self.worker.start()
 }
 
+// 停止挖矿
 func (self *Miner) Stop() {
 	self.worker.stop()
 	atomic.StoreInt32(&self.shouldStart, 0)

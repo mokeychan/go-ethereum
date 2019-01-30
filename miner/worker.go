@@ -165,7 +165,7 @@ type worker struct {
 	snapshotState *state.StateDB // 快照stateDB
 
 	// atomic status counters
-	running int32 // The indicator whether the consensus engine is running or not. 判断共识引擎是否启动
+	running int32 // The indicator whether the consensus engine is running or not. 判断共识引擎是否启动 0 为关闭
 	newTxs  int32 // New arrival transaction count since last sealing work submitting. 记录上次递交任务后新来的区块数量
 
 	// External functions
@@ -193,7 +193,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		remoteUncles:       make(map[common.Hash]*types.Block),
 		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
 		pendingTasks:       make(map[common.Hash]*task),
-		txsCh:              make(chan core.NewTxsEvent, txChanSize),           // TxPreEvent事件是TxPool发出的事件，代表一个新交易tx加入到了交易池中，准备下一次打包进块。
+		txsCh:              make(chan core.NewTxsEvent, txChanSize),           // NewTxsEvent事件是TxPool发出的事件，代表一个新交易tx加入到了交易池中，准备下一次打包进块。
 		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize), // ChainHeadEvent事件，代表已经有一个块作为链头，则会继续挖新的区块。
 		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize), // ChainSideEvent事件，代表有一个新块作为链的旁支，可能称为叔块。
 		newWorkCh:          make(chan *newWorkReq),
@@ -204,7 +204,6 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		resubmitIntervalCh: make(chan time.Duration),
 		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
 	}
-	// Subscribe NewTxsEvent for tx pool
 	// 订阅NewTxsEvent事件 from tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
 	// Subscribe events for blockchain
@@ -242,6 +241,7 @@ func (w *worker) setEtherbase(addr common.Address) {
 }
 
 // setExtra sets the content used to initialize the block extra field.
+// 设置区块的额外信息
 func (w *worker) setExtra(extra []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

@@ -213,6 +213,7 @@ func (n *Node) Start() error {
 		started = append(started, kind)
 	}
 	// Lastly start the configured RPC interfaces
+	// 最后，启动配置的RPC接口
 	if err := n.startRPC(services); err != nil {
 		for _, service := range services {
 			service.Stop()

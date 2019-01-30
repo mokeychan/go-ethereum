@@ -194,7 +194,7 @@ type TxPool struct {
 	chainconfig  *params.ChainConfig
 	chain        blockChain
 	gasPrice     *big.Int
-	txFeed       event.Feed // 通过txFeed来订阅tx_pool消息
+	txFeed       event.Feed // txFeed用于推送tx进入tx_pool消息，通知miner模块
 	scope        event.SubscriptionScope
 	chainHeadCh  chan ChainHeadEvent // 订阅了区块头的信息，当有新的区块头生成的时候会在这里收到通知
 	chainHeadSub event.Subscription  // 区块头信息订阅器
@@ -447,6 +447,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 }
 
 // Stop terminates the transaction pool.
+// 关闭交易池
 func (pool *TxPool) Stop() {
 	// Unsubscribe all subscriptions registered from txpool
 	pool.scope.Close()
@@ -466,6 +467,8 @@ func (pool *TxPool) Stop() {
 // 外部会通过SubscribeNewTxsEvent()函数来订阅事件NewTxsEvent
 // worker.go 209 处会通过这个方法来订阅事件
 func (pool *TxPool) SubscribeNewTxsEvent(ch chan<- NewTxsEvent) event.Subscription {
+	// txFeed.Subscribe(ch) 对这个chan(或者说event 进行了订阅), 返回Subscription
+	// scope.Track() 这个方法负责跟踪订阅者
 	return pool.scope.Track(pool.txFeed.Subscribe(ch))
 }
 

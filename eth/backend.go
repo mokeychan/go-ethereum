@@ -60,36 +60,39 @@ type LesServer interface {
 
 // Ethereum implements the Ethereum full node service.
 type Ethereum struct {
-	config      *Config
+	// Ethereum的配置文件，包括用户可以命令行输入的配置或者一些默认配置
+	config *Config
+	// 区块链的相关配置，包括ChainID、分叉点相关的配置
 	chainConfig *params.ChainConfig
 
+	// 服务关闭管道，Ethereum模块关闭时会通过这个管道通知其管理的子模块退出
 	// Channel for shutting down the service
 	shutdownChan chan bool // Channel for shutting down the Ethereum
 
-	// Handlers
-	txPool          *core.TxPool
-	blockchain      *core.BlockChain
-	protocolManager *ProtocolManager
-	lesServer       LesServer
+	// Handlers 包含的模块(服务)
+	txPool          *core.TxPool     // 交易池模块
+	blockchain      *core.BlockChain // 区块链管理模块
+	protocolManager *ProtocolManager // 协议管理模块，负责区块、交易的广播和接收、区块同步等
+	lesServer       LesServer        // 轻节点服务，ethereum是全节点服务，全节点服务中也可以包含轻节点服务
 
 	// DB interfaces
-	chainDb ethdb.Database // Block chain database
+	chainDb ethdb.Database // Block chain database 区块链的数据库接口
 
 	eventMux       *event.TypeMux
-	engine         consensus.Engine
-	accountManager *accounts.Manager
+	engine         consensus.Engine  // 共识引擎
+	accountManager *accounts.Manager // 钱包管理器，管理账户钱包，主要管理钱包私钥、交易签名等
 
 	bloomRequests chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
-	bloomIndexer  *core.ChainIndexer             // Bloom indexer operating during block imports
+	bloomIndexer  *core.ChainIndexer             // Bloom indexer operating during block imports bloom过滤器
 
-	APIBackend *EthAPIBackend
+	APIBackend *EthAPIBackend // web3 API后端
 
-	miner     *miner.Miner
+	miner     *miner.Miner // 挖矿模块
 	gasPrice  *big.Int
-	etherbase common.Address
+	etherbase common.Address // 矿工地址 一般是本地第一个账户地址 也可以setEtherBase
 
 	networkID     uint64
-	netRPCService *ethapi.PublicNetAPI
+	netRPCService *ethapi.PublicNetAPI // RPC网络服务
 
 	lock sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 }
@@ -101,7 +104,7 @@ func (s *Ethereum) AddLesServer(ls LesServer) {
 
 // New creates a new Ethereum object (including the
 // initialisation of the common Ethereum object)
-// 创建Ethereum对象
+// 初始化Ethereum协议
 func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	// Ensure configuration values are compatible and sane
 	if config.SyncMode == downloader.LightSync {
@@ -110,6 +113,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if !config.SyncMode.IsValid() {
 		return nil, fmt.Errorf("invalid sync mode %d", config.SyncMode)
 	}
+	// 交易池不会接收低于MinerGasPrice的交易
 	if config.MinerGasPrice == nil || config.MinerGasPrice.Cmp(common.Big0) <= 0 {
 		log.Warn("Sanitizing invalid miner gas price", "provided", config.MinerGasPrice, "updated", DefaultConfig.MinerGasPrice)
 		config.MinerGasPrice = new(big.Int).Set(DefaultConfig.MinerGasPrice)
@@ -120,12 +124,14 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 更新创始区块配置
 	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
 	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
 		return nil, genesisErr
 	}
 	log.Info("Initialised chain configuration", "config", chainConfig)
 
+	// 构造Ethereum对象
 	eth := &Ethereum{
 		config:         config,
 		chainDb:        chainDb,
@@ -158,6 +164,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		}
 		cacheConfig = &core.CacheConfig{Disabled: config.NoPruning, TrieCleanLimit: config.TrieCleanCache, TrieDirtyLimit: config.TrieDirtyCache, TrieTimeLimit: config.TrieTimeout}
 	)
+	// 初始化BlockChain
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, eth.chainConfig, eth.engine, vmConfig, eth.shouldPreserve)
 	if err != nil {
 		return nil, err
@@ -168,19 +175,21 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 		eth.blockchain.SetHead(compat.RewindTo)
 		rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
+	// 布隆过滤器启动
 	eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = ctx.ResolvePath(config.TxPool.Journal)
 	}
+	// 初始化交易池
 	eth.txPool = core.NewTxPool(config.TxPool, eth.chainConfig, eth.blockchain)
 
 	if eth.protocolManager, err = NewProtocolManager(eth.chainConfig, config.SyncMode, config.NetworkId, eth.eventMux, eth.txPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
-
+	// pps: 这里在启动的时候就完成矿工的初始化 （自然包括对新交易的监听）
 	eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine, config.MinerRecommit, config.MinerGasFloor, config.MinerGasCeil, eth.isLocalBlock)
-	eth.miner.SetExtra(makeExtraData(config.MinerExtraData))
+	eth.miner.SetExtra(makeExtraData(config.MinerExtraData)) // 当挖到区块时写入这个[32]byte的信息
 
 	// eth.APIBackend
 	eth.APIBackend = &EthAPIBackend{eth, nil}

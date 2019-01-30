@@ -39,13 +39,16 @@ import (
 // cases to ensure that resources related to the subscription are released. It can be
 // called any number of times.
 type Subscription interface {
+	// 返回错误的channel
 	Err() <-chan error // returns the error channel
-	Unsubscribe()      // cancels sending of events, closing the error channel
+	// 取消订阅的方法
+	Unsubscribe() // cancels sending of events, closing the error channel
 }
 
 // NewSubscription runs a producer function as a subscription in a new goroutine. The
 // channel given to the producer is closed when Unsubscribe is called. If fn returns an
 // error, it is sent on the subscription's error channel.
+// 更高级的做法：接收一个函数作为生产者
 func NewSubscription(producer func(<-chan struct{}) error) Subscription {
 	s := &funcSub{unsub: make(chan struct{}), err: make(chan error, 1)}
 	go func() {
@@ -212,6 +215,7 @@ func (s *resubscribeSub) backoffWait() bool {
 // larger program.
 //
 // The zero value is ready to use.
+// 用于追踪多个订阅者，提供集中的取消订阅功能.
 type SubscriptionScope struct {
 	mu     sync.Mutex
 	subs   map[*scopeSub]struct{}
@@ -226,6 +230,8 @@ type scopeSub struct {
 // Track starts tracking a subscription. If the scope is closed, Track returns nil. The
 // returned subscription is a wrapper. Unsubscribing the wrapper removes it from the
 // scope.
+// Track 负责跟踪订阅者
+// 这样做的目的是把所有的Subscription接口实例都集中到一个map中，从而实现快速取消所有的订阅。
 func (sc *SubscriptionScope) Track(s Subscription) Subscription {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
