@@ -708,7 +708,6 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 
 		// We've directly injected a replacement transaction, notify subsystems
 		// 此tx在pending池中是可执行的交易，启用一个协程，发布事件NewTxsEvent，通知订阅者
-		// 外部订阅这个事件
 		go pool.txFeed.Send(NewTxsEvent{types.Transactions{tx}})
 
 		return old != nil, nil

@@ -107,9 +107,21 @@ func TestFeed3(t *testing.T) {
 func Test1(t *testing.T) {
 	aChan := make(chan int, 1)
 	chanval := reflect.ValueOf(aChan)
-	t.Logf("chanval is %v", chanval.String())
+	t.Logf("chanval is %v\n", chanval.String())
 	chantyp := chanval.Type()
 	if chantyp.Kind() != reflect.Chan || chantyp.ChanDir()&reflect.SendDir == 0 {
 		panic(errBadChannel)
 	}
+
+	cs := []int{0, 1, 2, 3, 4}
+	cs = deactivate(cs, 1)
+	for i := 0; i < len(cs); i++ {
+		t.Logf("cs %d value is %v\n", i, cs[i])
+	}
+}
+
+func deactivate(cs []int, index int) []int {
+	last := len(cs) - 1
+	cs[index], cs[last] = cs[last], cs[index]
+	return cs[:last]
 }

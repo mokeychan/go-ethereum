@@ -39,9 +39,9 @@ import (
 // cases to ensure that resources related to the subscription are released. It can be
 // called any number of times.
 type Subscription interface {
-	// 返回错误的channel
+	// 负责出错处理
 	Err() <-chan error // returns the error channel
-	// 取消订阅的方法
+	// 负责取消订阅
 	Unsubscribe() // cancels sending of events, closing the error channel
 }
 
