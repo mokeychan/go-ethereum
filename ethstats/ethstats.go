@@ -151,6 +151,7 @@ func (s *Service) loop() {
 	defer headSub.Unsubscribe()
 
 	txEventCh := make(chan core.NewTxsEvent, txChanSize)
+	// 订阅新tx事件
 	txSub := txpool.SubscribeNewTxsEvent(txEventCh)
 	defer txSub.Unsubscribe()
 

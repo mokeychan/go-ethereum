@@ -325,6 +325,7 @@ func (pool *TxPool) Stop() {
 
 // SubscribeNewTxsEvent registers a subscription of core.NewTxsEvent and
 // starts sending event to the given channel.
+// 订阅新tx事件
 func (pool *TxPool) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
 	return pool.scope.Track(pool.txFeed.Subscribe(ch))
 }
@@ -390,6 +391,7 @@ func (pool *TxPool) validateTx(ctx context.Context, tx *types.Transaction) error
 
 // add validates a new transaction and sets its state pending if processable.
 // It also updates the locally stored nonce if necessary.
+// 添加被验证信息的交易，如果通过，放入pending队列
 func (self *TxPool) add(ctx context.Context, tx *types.Transaction) error {
 	hash := tx.Hash()
 
@@ -414,6 +416,7 @@ func (self *TxPool) add(ctx context.Context, tx *types.Transaction) error {
 		// Notify the subscribers. This event is posted in a goroutine
 		// because it's possible that somewhere during the post "Remove transaction"
 		// gets called which will then wait for the global tx pool lock and deadlock.
+		// 启用一个协程 发送消息，去通知事件的订阅者。
 		go self.txFeed.Send(core.NewTxsEvent{Txs: types.Transactions{tx}})
 	}
 

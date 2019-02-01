@@ -131,9 +131,9 @@ func (self *Miner) Start(coinbase common.Address) {
 	self.worker.start()
 }
 
-// 停止挖矿
 func (self *Miner) Stop() {
 	self.worker.stop()
+	// 停止挖矿的时候将模块开关调为0
 	atomic.StoreInt32(&self.shouldStart, 0)
 }
 

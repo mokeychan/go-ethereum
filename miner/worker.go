@@ -181,19 +181,20 @@ type worker struct {
 // 实例化一个worker
 func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(*types.Block) bool) *worker {
 	worker := &worker{
-		config:             config,
-		engine:             engine,
-		eth:                eth,
-		mux:                mux,
-		chain:              eth.BlockChain(),
-		gasFloor:           gasFloor,
-		gasCeil:            gasCeil,
-		isLocalBlock:       isLocalBlock,
-		localUncles:        make(map[common.Hash]*types.Block),
-		remoteUncles:       make(map[common.Hash]*types.Block),
-		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
-		pendingTasks:       make(map[common.Hash]*task),
-		txsCh:              make(chan core.NewTxsEvent, txChanSize),           // NewTxsEvent事件是TxPool发出的事件，代表一个新交易tx加入到了交易池中，准备下一次打包进块。
+		config:       config,
+		engine:       engine,
+		eth:          eth,
+		mux:          mux,
+		chain:        eth.BlockChain(),
+		gasFloor:     gasFloor,
+		gasCeil:      gasCeil,
+		isLocalBlock: isLocalBlock,
+		localUncles:  make(map[common.Hash]*types.Block),
+		remoteUncles: make(map[common.Hash]*types.Block),
+		unconfirmed:  newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
+		pendingTasks: make(map[common.Hash]*task),
+		// 建立一个4096缓冲大小的新交易channel，用于接收新的交易事件
+		txsCh:              make(chan core.NewTxsEvent, txChanSize),
 		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize), // ChainHeadEvent事件，代表已经有一个块作为链头，则会继续挖新的区块。
 		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize), // ChainSideEvent事件，代表有一个新块作为链的旁支，可能称为叔块。
 		newWorkCh:          make(chan *newWorkReq),
@@ -204,7 +205,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		resubmitIntervalCh: make(chan time.Duration),
 		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
 	}
-	// 订阅NewTxsEvent事件 from tx pool
+	// 作为订阅者，订阅NewTxsEvent事件 from tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
