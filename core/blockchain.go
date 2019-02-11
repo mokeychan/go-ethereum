@@ -1109,6 +1109,11 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 // racey behaviour. If a sidechain import is in progress, and the historic state
 // is imported, but then new canon-head is added before the actual sidechain
 // completes, then the historic state could be pruned again
+// inertChain函数是功能是将一组区块批量插入区块链
+// 调用时机：
+// 1.导入区块admin.importChain
+// 2.主动去同步区块
+// 3.接受其他节点发送过来的区块
 func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []interface{}, []*types.Log, error) {
 	// If the chain is terminating, don't even bother starting u
 	if atomic.LoadInt32(&bc.procInterrupt) == 1 {

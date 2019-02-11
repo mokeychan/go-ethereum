@@ -48,6 +48,7 @@ var (
 
 // Seal implements consensus.Engine, attempting to find a nonce that satisfies
 // the block's difficulty requirements.
+// Seal()尝试找出一个满足区块难度的nonce值, 完成工作量证明
 func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	// If we're running a fake PoW, simply return a 0 nonce immediately
 	if ethash.config.PowMode == ModeFake || ethash.config.PowMode == ModeFullFake {
@@ -68,23 +69,25 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 	abort := make(chan struct{})
 
 	ethash.lock.Lock()
-	threads := ethash.threads
+	threads := ethash.threads // 有多少矿工在挖矿
 	if ethash.rand == nil {
 		seed, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 		if err != nil {
 			ethash.lock.Unlock()
 			return err
 		}
-		ethash.rand = rand.New(rand.NewSource(seed.Int64()))
+		ethash.rand = rand.New(rand.NewSource(seed.Int64())) // 得到一个随机数
 	}
 	ethash.lock.Unlock()
 	if threads == 0 {
-		threads = runtime.NumCPU()
+		threads = runtime.NumCPU() // Seal函数尝试找出一个满足区块难度的nonce值
 	}
 	if threads < 0 {
+		// 本地挖矿将被阻止
 		threads = 0 // Allows disabling local mining without extra logic around local/remote
 	}
 	// Push new work to remote sealer
+	// 将任务推向远程
 	if ethash.workCh != nil {
 		ethash.workCh <- &sealTask{block: block, results: results}
 	}
@@ -96,18 +99,22 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 		pend.Add(1)
 		go func(id int, nonce uint64) {
 			defer pend.Done()
+			// 开始挖矿，进入hash碰撞模式
 			ethash.mine(block, id, nonce, abort, locals)
 		}(i, uint64(ethash.rand.Int63()))
 	}
 	// Wait until sealing is terminated or a nonce is found
+	// 获取挖矿返回的结果，select接收，挖矿停止，或者找到合适的nonce
 	go func() {
 		var result *types.Block
 		select {
 		case <-stop:
 			// Outside abort, stop all miner threads
+			// 关闭所有的channel
 			close(abort)
 		case result = <-locals:
 			// One of the threads found a block, abort all others
+			// 只要有一个矿工挖到合适的块，则停止其余所有。
 			select {
 			case results <- result:
 			default:
@@ -116,12 +123,14 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 			close(abort)
 		case <-ethash.update:
 			// Thread count was changed on user request, restart
+			// 用户若更新了矿工数（新增或者减少），则停止所有矿工，然后重新挖
 			close(abort)
 			if err := ethash.Seal(chain, block, results, stop); err != nil {
 				log.Error("Failed to restart sealing after update", "err", err)
 			}
 		}
 		// Wait for all miners to terminate and return the block
+		// 等待所有矿工结束
 		pend.Wait()
 	}()
 	return nil
@@ -129,6 +138,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 
 // mine is the actual proof-of-work miner that searches for a nonce starting from
 // seed that results in correct final block difficulty.
+// mine
 func (ethash *Ethash) mine(block *types.Block, id int, seed uint64, abort chan struct{}, found chan *types.Block) {
 	// Extract some data from the header
 	var (

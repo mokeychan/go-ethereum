@@ -15,6 +15,7 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package consensus implements different Ethereum consensus engines.
+// 共识模块的通用规则设计
 package consensus
 
 import (
@@ -29,60 +30,77 @@ import (
 
 // ChainReader defines a small collection of methods needed to access the local
 // blockchain during header and/or uncle verification.
+// 以太坊提供了一些访问本地链中块或者块头部的接口
 type ChainReader interface {
 	// Config retrieves the blockchain's chain configuration.
+	// 获取本地链的配置信息
 	Config() *params.ChainConfig
 
 	// CurrentHeader retrieves the current header from the local chain.
+	// 返回本地链的当前块头部
 	CurrentHeader() *types.Header
 
 	// GetHeader retrieves a block header from the database by hash and number.
+	// 根据输入内容（块hash和块号），从链中返回一个块的头部信息
 	GetHeader(hash common.Hash, number uint64) *types.Header
 
 	// GetHeaderByNumber retrieves a block header from the database by number.
+	// 通过块号从db中返回块
 	GetHeaderByNumber(number uint64) *types.Header
 
 	// GetHeaderByHash retrieves a block header from the database by its hash.
+	// 通过块hash返回块
 	GetHeaderByHash(hash common.Hash) *types.Header
 
 	// GetBlock retrieves a block from the database by hash and number.
+	// 根据输入内容（块hash和块号），从db中返回一个块
 	GetBlock(hash common.Hash, number uint64) *types.Block
 }
 
 // Engine is an algorithm agnostic consensus engine.
+// 以太坊通用共识引擎接口
 type Engine interface {
 	// Author retrieves the Ethereum address of the account that minted the given
 	// block, which may be different from the header's coinbase if a consensus
 	// engine is based on signatures.
+	// 获取当前挖矿矿工的以太坊地址
 	Author(header *types.Header) (common.Address, error)
 
 	// VerifyHeader checks whether a header conforms to the consensus rules of a
 	// given engine. Verifying the seal may be done optionally here, or explicitly
 	// via the VerifySeal method.
+	// 校验块头部信息是否符合共识规则，是否封印
 	VerifyHeader(chain ChainReader, header *types.Header, seal bool) error
 
 	// VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers
 	// concurrently. The method returns a quit channel to abort the operations and
 	// a results channel to retrieve the async verifications (the order is that of
 	// the input slice).
+	// 批量校验块头部，这个方法返回一个退出信号用于终止操作，用于异步校验
 	VerifyHeaders(chain ChainReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error)
 
 	// VerifyUncles verifies that the given block's uncles conform to the consensus
 	// rules of a given engine.
+	// 校验叔块是否满足规则
 	VerifyUncles(chain ChainReader, block *types.Block) error
 
 	// VerifySeal checks whether the crypto seal on a header is valid according to
 	// the consensus rules of the given engine.
+	// VerifySeal()函数基于跟Seal()完全一样的算法原理，通过验证区块的某些属性(Header.Nonce，Header.MixDigest等)是否正确，来确定该区块是否已经经过Seal操作。
 	VerifySeal(chain ChainReader, header *types.Header) error
 
 	// Prepare initializes the consensus fields of a block header according to the
 	// rules of a particular engine. The changes are executed inline.
+	// 用于初始化区块头的共识字段根据共识引擎。这些改变都是内联执行的
 	Prepare(chain ChainReader, header *types.Header) error
 
 	// Finalize runs any post-transaction state modifications (e.g. block rewards)
 	// and assembles the final block.
 	// Note: The block header and state database might be updated to reflect any
 	// consensus rules that happen at finalization (e.g. block rewards).
+	// 完成所有的状态修改，并最终组装成块。
+	// 区块头和状态数据库在最终确认的时候可以被更新使之符合共识规则
+	// receipts表示返回显示交易结果
 	Finalize(chain ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction,
 		uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error)
 
@@ -91,26 +109,33 @@ type Engine interface {
 	//
 	// Note, the method returns immediately and will send the result async. More
 	// than one result may also be returned depending on the consensus algorithm.
+	// Seal()函数可对一个调用过Finalize()的区块进行授权或封印，并将封印过程产生的一些值赋予区块中剩余尚未赋值的成员(Header.Nonce, Header.MixDigest)
+	// Seal()成功时返回的区块全部成员齐整，可视为一个正常区块，可被广播到整个网络中，也可以被插入区块链等
 	Seal(chain ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error
 
+	// 返回前一个块的hash
 	// SealHash returns the hash of a block prior to it being sealed.
 	SealHash(header *types.Header) common.Hash
 
 	// CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 	// that a new block should have.
+	// 计算下一个块的难度
 	CalcDifficulty(chain ChainReader, time uint64, parent *types.Header) *big.Int
 
 	// APIs returns the RPC APIs this consensus engine provides.
+	// 返回由共识引擎提供的RPC APIs
 	APIs(chain ChainReader) []rpc.API
 
 	// Close terminates any background threads maintained by the consensus engine.
+	// 关闭共识，就是关闭挖矿的线程相关
 	Close() error
 }
 
 // PoW is a consensus engine based on proof-of-work.
 type PoW interface {
+	// POW共识继承了Engine接口，所以如果我们要自己实现共识，同样需要继承了Engine。
 	Engine
 
-	// Hashrate returns the current mining hashrate of a PoW consensus engine.
+	// Hashrate返回PoW共识引擎的当前挖掘哈希值。
 	Hashrate() float64
 }

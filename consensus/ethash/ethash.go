@@ -15,6 +15,7 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package ethash implements the ethash proof-of-work consensus engine.
+// pow算法的具体实现
 package ethash
 
 import (
@@ -386,15 +387,17 @@ func MakeDataset(block uint64, dir string) {
 // Mode defines the type and amount of PoW verification an ethash engine makes.
 type Mode uint
 
+// 几种挖矿模式
 const (
-	ModeNormal Mode = iota
-	ModeShared
-	ModeTest
-	ModeFake
-	ModeFullFake
+	ModeNormal   Mode = iota
+	ModeShared        // 分享模式，避免缓存干扰 TODO
+	ModeTest          // 测试模式
+	ModeFake          // 伪模式
+	ModeFullFake      //完全伪模式 不验证区块，提高速度
 )
 
 // Config are the configuration parameters of the ethash.
+// pow的一些基本配置，比如缓存路径、数据库路径等
 type Config struct {
 	CacheDir       string
 	CachesInMem    int
@@ -402,7 +405,7 @@ type Config struct {
 	DatasetDir     string
 	DatasetsInMem  int
 	DatasetsOnDisk int
-	PowMode        Mode
+	PowMode        Mode // 从此处可以设置不同的挖矿模式
 }
 
 // sealTask wraps a seal block with relative result channel for remote sealer thread.
@@ -440,15 +443,19 @@ type sealWork struct {
 type Ethash struct {
 	config Config
 
-	caches   *lru // In memory caches to avoid regenerating too often
+	// 在内存中存放的缓存信息 TODO
+	caches *lru // In memory caches to avoid regenerating too often
+	// 在内存中存放的数据库信息
 	datasets *lru // In memory datasets to avoid regenerating too often
 
 	// Mining related fields
-	rand     *rand.Rand    // Properly seeded random source for nonces
-	threads  int           // Number of threads to mine on if mining
-	update   chan struct{} // Notification channel to update mining parameters
-	hashrate metrics.Meter // Meter tracking the average hashrate
+	// 挖矿相关
+	rand     *rand.Rand    // Properly seeded random source for nonces  nonce的随机种子
+	threads  int           // Number of threads to mine on if mining 正在挖矿的线程数量
+	update   chan struct{} // Notification channel to update mining parameters 通知更新挖矿参数
+	hashrate metrics.Meter // Meter tracking the average hashrate 跟踪hash相关的速率，应该是用来监控，保证难度恒定
 
+	// TODO
 	// Remote sealer related fields
 	workCh       chan *sealTask   // Notification channel to push new work and relative result channel to remote sealer
 	fetchWorkCh  chan *sealWork   // Channel used for remote sealer to fetch mining work
@@ -569,8 +576,10 @@ func NewShared() *Ethash {
 }
 
 // Close closes the exit channel to notify all backend threads exiting.
+// 关闭整个挖矿线程
 func (ethash *Ethash) Close() error {
 	var err error
+	// 只会触发执行一次
 	ethash.closeOnce.Do(func() {
 		// Short circuit if the exit channel is not allocated.
 		if ethash.exitCh == nil {
@@ -672,25 +681,30 @@ func (ethash *Ethash) SetThreads(threads int) {
 // per second over the last minute.
 // Note the returned hashrate includes local hashrate, but also includes the total
 // hashrate of all remote miner.
+// 获取当前节点的算力
 func (ethash *Ethash) Hashrate() float64 {
 	// Short circuit if we are run the ethash in normal/test mode.
+	// fake模式使用
 	if ethash.config.PowMode != ModeNormal && ethash.config.PowMode != ModeTest {
 		return ethash.hashrate.Rate1()
 	}
 	var res = make(chan uint64, 1)
 
 	select {
+	// fetchRateCh本身是一个chan chan uint64类型
+	// 此处说明：本地或远程挖矿的算力会记录到ethash.fetchRateCh，然后它会将结果写入到res中，<-res即可取出结果
 	case ethash.fetchRateCh <- res:
 	case <-ethash.exitCh:
 		// Return local hashrate only if ethash is stopped.
 		return ethash.hashrate.Rate1()
 	}
-
+	// 返回算力
 	// Gather total submitted hash rate of remote sealers.
 	return ethash.hashrate.Rate1() + float64(<-res)
 }
 
 // APIs implements consensus.Engine, returning the user facing RPC APIs.
+// 对外提供的API接口
 func (ethash *Ethash) APIs(chain consensus.ChainReader) []rpc.API {
 	// In order to ensure backward compatibility, we exposes ethash RPC APIs
 	// to both eth and ethash namespaces.

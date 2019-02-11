@@ -41,8 +41,8 @@ var (
 	FrontierBlockReward       = big.NewInt(5e+18) // Block reward in wei for successfully mining a block
 	ByzantiumBlockReward      = big.NewInt(3e+18) // Block reward in wei for successfully mining a block upward from Byzantium
 	ConstantinopleBlockReward = big.NewInt(2e+18) // Block reward in wei for successfully mining a block upward from Constantinople
-	maxUncles                 = 2                 // Maximum number of uncles allowed in a single block
-	allowedFutureBlockTime    = 15 * time.Second  // Max time from current time allowed for blocks, before they're considered future blocks
+	maxUncles                 = 2                 // Maximum number of uncles allowed in a single block 允许的最大叔块数
+	allowedFutureBlockTime    = 15 * time.Second  // Max time from current time allowed for blocks, before they're considered future blocks 允许的最大出块间隔？
 
 	// calcDifficultyConstantinople is the difficulty adjustment algorithm for Constantinople.
 	// It returns the difficulty that a new block should have when created at time given the
@@ -55,6 +55,7 @@ var (
 	// the difficulty that a new block should have when created at time given the
 	// parent block's time and difficulty. The calculation uses the Byzantium rules.
 	// Specification EIP-649: https://eips.ethereum.org/EIPS/eip-649
+	// 3000000表示从以太坊从第300万个块之后都使用这样一个难度计算方式
 	calcDifficultyByzantium = makeDifficultyCalculator(big.NewInt(3000000))
 )
 
@@ -76,35 +77,45 @@ var (
 
 // Author implements consensus.Engine, returning the header's coinbase as the
 // proof-of-work verified author of the block.
+// 获取当前块的矿工地址
 func (ethash *Ethash) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules of the
 // stock Ethereum ethash engine.
+// 用于校验区块头部信息是否符合ethash共识引擎规则
 func (ethash *Ethash) VerifyHeader(chain consensus.ChainReader, header *types.Header, seal bool) error {
 	// If we're running a full engine faking, accept any input as valid
+	// 如果是ModeFullFake模式下，则不需要进行任何的校验
 	if ethash.config.PowMode == ModeFullFake {
 		return nil
 	}
 	// Short circuit if the header is known, or it's parent not
+	// 根据该块的块号和hash在链中判断，是否能找到该块，能则返回，否则继续
 	number := header.Number.Uint64()
 	if chain.GetHeader(header.Hash(), number) != nil {
 		return nil
 	}
+	// 根据该块的父块的hash和块号，检测能否在链中找到该父块，不能找到则返回错误，否则继续（此时说明该块是一个新块）
 	parent := chain.GetHeader(header.ParentHash, number-1)
 	if parent == nil {
+		// 拿不到父块，则返回异常
 		return consensus.ErrUnknownAncestor
 	}
 	// Sanity checks passed, do a proper verification
+	// 拿到父块后，对该块做进一步到验证，用来确保该块的正确性
+	// false表示不是叔块
 	return ethash.verifyHeader(chain, header, parent, false, seal)
 }
 
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers
 // concurrently. The method returns a quit channel to abort the operations and
 // a results channel to retrieve the async verifications.
+// 批量验证区块头 TODO
 func (ethash *Ethash) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
 	// If we're running a full engine faking, accept any input as valid
+	// ModeFullFake模式则什么也不处理，直接返回
 	if ethash.config.PowMode == ModeFullFake || len(headers) == 0 {
 		abort, results := make(chan struct{}), make(chan error, len(headers))
 		for i := 0; i < len(headers); i++ {
@@ -114,6 +125,7 @@ func (ethash *Ethash) VerifyHeaders(chain consensus.ChainReader, headers []*type
 	}
 
 	// Spawn as many workers as allowed threads
+	// 确保每个核都参与工作，0表示CPU的最大数
 	workers := runtime.GOMAXPROCS(0)
 	if len(headers) < workers {
 		workers = len(headers)
@@ -126,15 +138,18 @@ func (ethash *Ethash) VerifyHeaders(chain consensus.ChainReader, headers []*type
 		errors = make([]error, len(headers))
 		abort  = make(chan struct{})
 	)
+	// 所有的worker都进行干活
 	for i := 0; i < workers; i++ {
 		go func() {
 			for index := range inputs {
+				// 真正验证头部的方法verifyHeaderWorker
 				errors[index] = ethash.verifyHeaderWorker(chain, headers, seals, index)
 				done <- index
 			}
 		}()
 	}
-
+	// 用于在select接收存储到的错误
+	// TODO
 	errorsOut := make(chan error, len(headers))
 	go func() {
 		defer close(inputs)
@@ -178,23 +193,35 @@ func (ethash *Ethash) verifyHeaderWorker(chain consensus.ChainReader, headers []
 	if chain.GetHeader(headers[index].Hash(), headers[index].Number.Uint64()) != nil {
 		return nil // known block
 	}
+	//
 	return ethash.verifyHeader(chain, headers[index], parent, false, seals[index])
 }
 
 // VerifyUncles verifies that the given block's uncles conform to the consensus
-// rules of the stock Ethereum ethash engine.
+// rules of the stock Ethereum ethash engine
+// 校验叔块的方法(与校验头部的方法类似) TODO
+/**
+  当前块的父块的父块是当前块叔块的父块
+  一个块有两个叔块
+  将该块的前8个块及其叔块信息分别汇总，是为了更好的确保当前块叔块的正确性，防止有重复等问题，确保叔块和正常块不会交叉混淆，这也是避免有人恶意操作吧zzz。
+*/
 func (ethash *Ethash) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
 	// If we're running a full engine faking, accept any input as valid
 	if ethash.config.PowMode == ModeFullFake {
 		return nil
 	}
 	// Verify that there are at most 2 uncles included in this block
+	// 当前块最多只能有两个叔块
 	if len(block.Uncles()) > maxUncles {
 		return errTooManyUncles
 	}
 	// Gather the set of past uncles and ancestors
+	// 汇总叔块和祖先,祖先是指当前块的前8个块
+	// uncles 存放每个主块的uncles块的hash
+	// ancestors 存放祖先块的hash
 	uncles, ancestors := mapset.NewSet(), make(map[common.Hash]*types.Header)
 
+	// 父块的块高 和 区块hash
 	number, parent := block.NumberU64()-1, block.ParentHash()
 	for i := 0; i < 7; i++ {
 		ancestor := chain.GetBlock(parent, number)
@@ -207,12 +234,13 @@ func (ethash *Ethash) VerifyUncles(chain consensus.ChainReader, block *types.Blo
 		}
 		parent, number = ancestor.ParentHash(), number-1
 	}
-	ancestors[block.Hash()] = block.Header()
-	uncles.Add(block.Hash())
+	ancestors[block.Hash()] = block.Header() // 祖先中一共有8个区块
+	uncles.Add(block.Hash())                 // uncles主要就是用来保证hash不重复
 
 	// Verify each of the uncles that it's recent, but not an ancestor
+	// 把当前块的叔块hash也加入到uncles中做重复过滤
 	for _, uncle := range block.Uncles() {
-		// Make sure every uncle is rewarded only once
+		// 确保每个叔块只获得一次奖励
 		hash := uncle.Hash()
 		if uncles.Contains(hash) {
 			return errDuplicateUncle
@@ -220,12 +248,15 @@ func (ethash *Ethash) VerifyUncles(chain consensus.ChainReader, block *types.Blo
 		uncles.Add(hash)
 
 		// Make sure the uncle has a valid ancestry
+		// 确保叔块有一个有效的祖先
 		if ancestors[hash] != nil {
 			return errUncleIsAncestor
 		}
+		// 叔块应该指向当前块的父块的父块
 		if ancestors[uncle.ParentHash] == nil || uncle.ParentHash == block.ParentHash() {
 			return errDanglingUncle
 		}
+		// 使用verifyHeader来进一步校验块
 		if err := ethash.verifyHeader(chain, uncle, ancestors[uncle.ParentHash], true, true); err != nil {
 			return err
 		}
@@ -236,60 +267,77 @@ func (ethash *Ethash) VerifyUncles(chain consensus.ChainReader, block *types.Blo
 // verifyHeader checks whether a header conforms to the consensus rules of the
 // stock Ethereum ethash engine.
 // See YP section 4.3.4. "Block Header Validity"
+// 详细校验区块头是否合理
 func (ethash *Ethash) verifyHeader(chain consensus.ChainReader, header, parent *types.Header, uncle bool, seal bool) error {
 	// Ensure that the header's extra-data section is of a reasonable size
+	// 校验头部额外的数据段长度合理 32
 	if uint64(len(header.Extra)) > params.MaximumExtraDataSize {
 		return fmt.Errorf("extra-data too long: %d > %d", len(header.Extra), params.MaximumExtraDataSize)
 	}
 	// Verify the header's timestamp
+	// 验证块头部的时间戳
 	if uncle {
+		// 是叔块
+		// 以太坊可以被认为是256位机器，超过后，则异常
 		if header.Time.Cmp(math.MaxBig256) > 0 {
 			return errLargeBlockTime
 		}
 	} else {
+		// 不是叔块
+		// 该块的生产时间超过了当前时间（+15秒），说明该块异常
 		if header.Time.Cmp(big.NewInt(time.Now().Add(allowedFutureBlockTime).Unix())) > 0 {
 			return consensus.ErrFutureBlock
 		}
 	}
+	// 当前区块的时间戳如果比上一个区块的小，则说明区块是异常
 	if header.Time.Cmp(parent.Time) <= 0 {
 		return errZeroBlockTime
 	}
+	// 根据该块的时间戳以及它父块的难度，获取当前块预期的难度值
 	// Verify the block's difficulty based in it's timestamp and parent's difficulty
 	expected := ethash.CalcDifficulty(chain, header.Time.Uint64(), parent)
 
+	// 该块预期难度值和该块head中记录的难度值如果不一样，则返回错误
 	if expected.Cmp(header.Difficulty) != 0 {
 		return fmt.Errorf("invalid difficulty: have %v, want %v", header.Difficulty, expected)
 	}
 	// Verify that the gas limit is <= 2^63-1
+	// 判断该块的gaslimit上限是否超过2^63-1
 	cap := uint64(0x7fffffffffffffff)
 	if header.GasLimit > cap {
 		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, cap)
 	}
+	// 判断该块的gasUsed是否 <= gasLimit
 	// Verify that the gasUsed is <= gasLimit
 	if header.GasUsed > header.GasLimit {
 		return fmt.Errorf("invalid gasUsed: have %d, gasLimit %d", header.GasUsed, header.GasLimit)
 	}
-
+	// 确保gas在允许范围内
 	// Verify that the gas limit remains within allowed bounds
 	diff := int64(parent.GasLimit) - int64(header.GasLimit)
 	if diff < 0 {
+		// 说明子块的gaslimit比父块的大，保证差异值为正
 		diff *= -1
 	}
+	// limit = 父块gaslimit / 1024
 	limit := parent.GasLimit / params.GasLimitBoundDivisor
-
+	// 差异值过大，或者gaslimit比5000还要小，则返回错误
 	if uint64(diff) >= limit || header.GasLimit < params.MinGasLimit {
 		return fmt.Errorf("invalid gas limit: have %d, want %d += %d", header.GasLimit, parent.GasLimit, limit)
 	}
 	// Verify that the block number is parent's +1
+	// 子块number-父块number若不是1，则返回异常
 	if diff := new(big.Int).Sub(header.Number, parent.Number); diff.Cmp(big.NewInt(1)) != 0 {
 		return consensus.ErrInvalidNumber
 	}
+	// 校验密封seal的块是否符合要求 TODO
 	// Verify the engine specific seal securing the block
 	if seal {
 		if err := ethash.VerifySeal(chain, header); err != nil {
 			return err
 		}
 	}
+	// 如果所有的检查通过，则校验硬分叉相关的特殊字段 TODO
 	// If all checks passed, validate any special fields for hard forks
 	if err := misc.VerifyDAOHeaderExtraData(chain.Config(), header); err != nil {
 		return err
@@ -303,6 +351,7 @@ func (ethash *Ethash) verifyHeader(chain consensus.ChainReader, header, parent *
 // CalcDifficulty is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
+// 计算下一个区块的难度(根据不同的阶段)
 func (ethash *Ethash) CalcDifficulty(chain consensus.ChainReader, time uint64, parent *types.Header) *big.Int {
 	return CalcDifficulty(chain.Config(), time, parent)
 }
@@ -310,12 +359,14 @@ func (ethash *Ethash) CalcDifficulty(chain consensus.ChainReader, time uint64, p
 // CalcDifficulty is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
+// 计算下一个区块的难度(根据不同的阶段)
 func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header) *big.Int {
 	next := new(big.Int).Add(parent.Number, big1)
 	switch {
 	case config.IsConstantinople(next):
 		return calcDifficultyConstantinople(time, parent)
 	case config.IsByzantium(next):
+		// 截止2019-2-11 15:19:50 以太坊还是处于大都会的拜占庭阶段..
 		return calcDifficultyByzantium(time, parent)
 	case config.IsHomestead(next):
 		return calcDifficultyHomestead(time, parent)
@@ -337,10 +388,24 @@ var (
 // makeDifficultyCalculator creates a difficultyCalculator with the given bomb-delay.
 // the difficulty is calculated with Byzantium rules, which differs from Homestead in
 // how uncles affect the calculation
+// makeDifficultyCalculator返回的：是一个带有返回值的方法
+// 方法参数bombDelay是块号，表示从哪个块开始
+// 返回的方法中，第一个参数是块的时间戳，第二个是父块
 func makeDifficultyCalculator(bombDelay *big.Int) func(time uint64, parent *types.Header) *big.Int {
 	// Note, the calculations below looks at the parent number, which is 1 below
 	// the block number. Thus we remove one from the delay given
+	// 要计算下一个块的难度，就需要先知道上一个块的编号
 	bombDelayFromParent := new(big.Int).Sub(bombDelay, big1)
+	// TODO
+	// diff = (parent_diff + (parent_diff / 2048 * max((2 if len(parent.uncles) else 1) - ((timestamp - parent.timestamp) / 9), -99)) ) + 2^(periodCount - 2)
+	// 公式中可得知，难度的计算加入了叔块。
+	// 为了更加清晰，公式整理如下：
+	/**
+	  block_diff = parent_diff + [难度调整] + [难度炸弹]
+	  [难度调整] = parent_diff / 2048 * max((2 if len(parent.uncles) else 1) - (block_timestamp - parent_timestamp) / 9, -99))
+	  [难度炸弹] = INT(2^((periodCount / 100000) - 2))
+	  备注：在300w~310w块之间，[难度炸弹]=0
+	*/
 	return func(time uint64, parent *types.Header) *big.Int {
 		// https://github.com/ethereum/EIPs/issues/100.
 		// algorithm:
@@ -488,8 +553,12 @@ func (ethash *Ethash) VerifySeal(chain consensus.ChainReader, header *types.Head
 // verifySeal checks whether a block satisfies the PoW difficulty requirements,
 // either using the usual ethash cache for it, or alternatively using a full DAG
 // to make remote mining fast.
+// 验证区块的某些属性(Header.Nonce，Header.MixDigest等)是否正确，来确定该区块是否已经经过Seal操作
+// 关于fulldag，true表示使用DAG，false使用传统的缓存机制
+// TODO
 func (ethash *Ethash) verifySeal(chain consensus.ChainReader, header *types.Header, fulldag bool) error {
 	// If we're running a fake PoW, accept any seal as valid
+	// Fake模式，最简化处理，伪验证
 	if ethash.config.PowMode == ModeFake || ethash.config.PowMode == ModeFullFake {
 		time.Sleep(ethash.fakeDelay)
 		if ethash.fakeFail == header.Number.Uint64() {
@@ -498,10 +567,12 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainReader, header *types.Head
 		return nil
 	}
 	// If we're running a shared PoW, delegate verification to it
+	// shanred模式的处理，这个暂时不考虑
 	if ethash.shared != nil {
 		return ethash.shared.verifySeal(chain, header, fulldag)
 	}
 	// Ensure that we have a valid difficulty for the block
+	// 难度值要大于0
 	if header.Difficulty.Sign() <= 0 {
 		return errInvalidDifficulty
 	}
@@ -514,33 +585,41 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainReader, header *types.Head
 	)
 	// If fast-but-heavy PoW verification was requested, use an ethash dataset
 	if fulldag {
+		// 使用DAG,结合db,生成数据集
 		dataset := ethash.dataset(number, true)
 		if dataset.generated() {
 			digest, result = hashimotoFull(dataset.dataset, ethash.SealHash(header).Bytes(), header.Nonce.Uint64())
 
 			// Datasets are unmapped in a finalizer. Ensure that the dataset stays alive
 			// until after the call to hashimotoFull so it's not unmapped while being used.
+			// 数据集finalizer中未映射。 确保数据集保持活动状态，直到调用hashimotoFull为止，因此在使用时不会取消映射
 			runtime.KeepAlive(dataset)
 		} else {
 			// Dataset not yet generated, don't hang, use a cache instead
+			// 使用缓存
 			fulldag = false
 		}
 	}
 	// If slow-but-light PoW verification was requested (or DAG not yet ready), use an ethash cache
+	// 如果使用普通验证或者是DAG还没准备好，则执行其中内容
 	if !fulldag {
 		cache := ethash.cache(number)
 
 		size := datasetSize(number)
 		if ethash.config.PowMode == ModeTest {
+			// 测试环境指定固定大小
 			size = 32 * 1024
 		}
+		// 调用hash计算算法，这就是hash碰撞的核心地方
 		digest, result = hashimotoLight(size, cache.cache, ethash.SealHash(header).Bytes(), header.Nonce.Uint64())
 
 		// Caches are unmapped in a finalizer. Ensure that the cache stays alive
 		// until after the call to hashimotoLight so it's not unmapped while being used.
+		// 缓存在finalizer中未映射。 确保缓存在调用hashimotoLight之前保持活动状态，因此在使用时不会取消映射
 		runtime.KeepAlive(cache)
 	}
 	// Verify the calculated values against the ones provided in the header
+	// 验证计算结果是否满足
 	if !bytes.Equal(header.MixDigest[:], digest) {
 		return errInvalidMixDigest
 	}
@@ -553,6 +632,7 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainReader, header *types.Head
 
 // Prepare implements consensus.Engine, initializing the difficulty field of a
 // header to conform to the ethash protocol. The changes are done inline.
+// Prepare()用来填充块头部中的难度值的
 func (ethash *Ethash) Prepare(chain consensus.ChainReader, header *types.Header) error {
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
@@ -564,16 +644,26 @@ func (ethash *Ethash) Prepare(chain consensus.ChainReader, header *types.Header)
 
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards,
 // setting the final state and assembling the block.
+// Finalize()--计算奖励,分配奖励给区块账户和叔块账户
+// 该方法最终会把这个区块记录在db中，从而生成一个新的区块
+// 调用时机：
+// 1.state_procerss Process()
+// 2.worker commit()
+// 3.chain_markers GenerateChain()
 func (ethash *Ethash) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
 	// Accumulate any block and uncle rewards and commit the final state root
+	// 计算和分配奖励
 	accumulateRewards(chain.Config(), state, header, uncles)
+	// 更新状态树、计算树根
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Header seems complete, assemble into a block and return
+	// 组装成新的区块并返回
 	return types.NewBlock(header, txs, uncles, receipts), nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
+// 将区块头RLP序列化,返回hash
 func (ethash *Ethash) SealHash(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewKeccak256()
 
@@ -605,27 +695,32 @@ var (
 // AccumulateRewards credits the coinbase of the given block with the mining
 // reward. The total reward consists of the static block reward and rewards for
 // included uncles. The coinbase of each uncle block is also rewarded.
+// 具体的奖励机制
 func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header *types.Header, uncles []*types.Header) {
 	// Select the correct block reward based on chain progression
-	blockReward := FrontierBlockReward
+	blockReward := FrontierBlockReward // 基础的奖励，5个ether
 	if config.IsByzantium(header.Number) {
-		blockReward = ByzantiumBlockReward
+		blockReward = ByzantiumBlockReward // 拜占庭阶段，3个ether
 	}
 	if config.IsConstantinople(header.Number) {
-		blockReward = ConstantinopleBlockReward
+		blockReward = ConstantinopleBlockReward // 康斯坦丁堡阶段，2个ether
 	}
 	// Accumulate the rewards for the miner and any included uncles
+	// 叔块的奖励逻辑
 	reward := new(big.Int).Set(blockReward)
 	r := new(big.Int)
 	for _, uncle := range uncles {
+		// 公式：((uncle.Number+8)-heater.Number)*blockReward/8
+		// 可以看出，叔块块号越大，叔块的奖励越大
 		r.Add(uncle.Number, big8)
 		r.Sub(r, header.Number)
 		r.Mul(r, blockReward)
 		r.Div(r, big8)
-		state.AddBalance(uncle.Coinbase, r)
+		state.AddBalance(uncle.Coinbase, r) // 发叔块的矿工奖励
 
+		// 从这里看出，每个区块中，每添加一个叔块，就会增加额外的1/32的奖励
 		r.Div(blockReward, big32)
 		reward.Add(reward, r)
 	}
-	state.AddBalance(header.Coinbase, reward)
+	state.AddBalance(header.Coinbase, reward) // 发当前区块的矿工奖励
 }

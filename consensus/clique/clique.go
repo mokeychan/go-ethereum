@@ -15,6 +15,7 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package clique implements the proof-of-authority consensus engine.
+// poa算法的具体实现(主要供私有链和联盟链使用，以太坊测试网络使用)
 package clique
 
 import (
