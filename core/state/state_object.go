@@ -99,6 +99,7 @@ type stateObject struct {
 }
 
 // empty returns whether the account is considered empty.
+// 返回账户是否为空
 func (s *stateObject) empty() bool {
 	return s.data.Nonce == 0 && s.data.Balance.Sign() == 0 && bytes.Equal(s.data.CodeHash, emptyCodeHash)
 }

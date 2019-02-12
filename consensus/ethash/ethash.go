@@ -390,10 +390,10 @@ type Mode uint
 // 几种挖矿模式
 const (
 	ModeNormal   Mode = iota
-	ModeShared        // 分享模式，避免缓存干扰 TODO
+	ModeShared        // 共享模式，避免缓存干扰 多在测试时使用
 	ModeTest          // 测试模式
 	ModeFake          // 伪模式
-	ModeFullFake      //完全伪模式 不验证区块，提高速度
+	ModeFullFake      // 完全伪模式 不验证区块，任何头部信息都接受，提高速度
 )
 
 // Config are the configuration parameters of the ethash.
@@ -443,15 +443,15 @@ type sealWork struct {
 type Ethash struct {
 	config Config
 
-	// 在内存中存放的缓存信息 TODO
+	// 缓存
 	caches *lru // In memory caches to avoid regenerating too often
-	// 在内存中存放的数据库信息
+	// 内存数据集
 	datasets *lru // In memory datasets to avoid regenerating too often
 
 	// Mining related fields
 	// 挖矿相关
 	rand     *rand.Rand    // Properly seeded random source for nonces  nonce的随机种子
-	threads  int           // Number of threads to mine on if mining 正在挖矿的线程数量
+	threads  int           // Number of threads to mine on if mining 正在挖矿的线程数量(矿工数)
 	update   chan struct{} // Notification channel to update mining parameters 通知更新挖矿参数
 	hashrate metrics.Meter // Meter tracking the average hashrate 跟踪hash相关的速率，应该是用来监控，保证难度恒定
 
@@ -464,6 +464,7 @@ type Ethash struct {
 	submitRateCh chan *hashrate   // Channel used for remote sealer to submit their mining hashrate
 
 	// The fields below are hooks for testing
+	// 测试网络相关参数
 	shared    *Ethash       // Shared PoW verifier to avoid cache regeneration
 	fakeFail  uint64        // Block number which fails PoW check even in fake mode
 	fakeDelay time.Duration // Time delay to sleep for before returning from verify

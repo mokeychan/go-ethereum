@@ -51,6 +51,7 @@ var (
 // Seal()尝试找出一个满足区块难度的nonce值, 完成工作量证明
 func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	// If we're running a fake PoW, simply return a 0 nonce immediately
+	// 在ModeFake和ModeFullFake模式下，快速返回，并且直接将nonce值取0
 	if ethash.config.PowMode == ModeFake || ethash.config.PowMode == ModeFullFake {
 		header := block.Header()
 		header.Nonce, header.MixDigest = types.BlockNonce{}, common.Hash{}
@@ -62,6 +63,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 		return nil
 	}
 	// If we're running a shared PoW, delegate sealing to it
+	// 在shared PoW模式下，使用shared的Seal函数
 	if ethash.shared != nil {
 		return ethash.shared.Seal(chain, block, results, stop)
 	}
@@ -138,17 +140,28 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 
 // mine is the actual proof-of-work miner that searches for a nonce starting from
 // seed that results in correct final block difficulty.
-// mine
+// mine 是真正查找nonce的函数 它不断遍历查找nonce值，并计算PoW值与目标值进行比较
+// RAND(h, n)  <=  M / d
+// 这里M表示一个极大的数，这里是2^256-1；
+// d表示Header成员Difficulty。RAND()是一个概念函数，它代表了一系列复杂的运算，并最终产生一个类似随机的数。
+// 这个函数包括两个基本入参：h是Header的哈希值(Header.HashNoNonce())，n表示Header成员Nonce。
+// 整个关系式可以大致理解为，在最大不超过M的范围内，以某个方式试图找到一个数，如果这个数符合条件(<=M/d)，那么就认为Seal()成功。
+// 由上面的公式可以得知，M恒定，d越大则可取范围越小。
+// 所以当难度值增加时，挖出区块的难度也在增加。
 func (ethash *Ethash) mine(block *types.Block, id int, seed uint64, abort chan struct{}, found chan *types.Block) {
 	// Extract some data from the header
+	// 从区块头获取一些数据
 	var (
-		header  = block.Header()
-		hash    = ethash.SealHash(header).Bytes()
+		header = block.Header()
+		hash   = ethash.SealHash(header).Bytes()
+		// target 即查找的PoW的上限 target = maxUint256/Difficulty
+		// 其中maxUint256 = 2^256-1  Difficulty即难度值
 		target  = new(big.Int).Div(two256, header.Difficulty)
 		number  = header.Number.Uint64()
 		dataset = ethash.dataset(number, false)
 	)
 	// Start generating random nonces until we abort or find a good one
+	// 尝试查找一个nonce值，直到终止或者找到目标值
 	var (
 		attempts = int64(0)
 		nonce    = seed
@@ -165,6 +178,7 @@ search:
 			break search
 
 		default:
+			// 不必在每个nonce值都更新hash rate，每2^x个nonce值更新一次hash rate
 			// We don't have to update hash rate on every nonce, so update after after 2^X nonces
 			attempts++
 			if (attempts % (1 << 15)) == 0 {
@@ -172,15 +186,20 @@ search:
 				attempts = 0
 			}
 			// Compute the PoW value of this nonce
+			// 用这个nonce计算pow工作量证明
 			digest, result := hashimotoFull(dataset.dataset, hash, nonce)
+			// 将计算的结果与目标值比较，如果小于目标值，则查找成功
 			if new(big.Int).SetBytes(result).Cmp(target) <= 0 {
 				// Correct nonce found, create a new header with it
+				// 查找到nonce值，更新区块头
 				header = types.CopyHeader(header)
 				header.Nonce = types.EncodeNonce(nonce)
 				header.MixDigest = common.BytesToHash(digest)
 
 				// Seal and return a block (if still needed)
+				// 打包区块头并返回
 				select {
+				// WithSeal 将新的区块头替换旧的区块头
 				case found <- block.WithSeal(header):
 					logger.Trace("Ethash nonce found and reported", "attempts", nonce-seed, "nonce", nonce)
 				case <-abort:

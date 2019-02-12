@@ -107,8 +107,10 @@ func defaultNodeConfig() node.Config {
 	return cfg
 }
 
+// 配置一些初始的参数
 func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	// Load defaults.
+	// 读取默认的配置
 	cfg := gethConfig{
 		Eth:       eth.DefaultConfig,
 		Shh:       whisper.DefaultConfig,
@@ -133,6 +135,8 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	if ctx.GlobalIsSet(utils.EthStatsURLFlag.Name) {
 		cfg.Ethstats.URL = ctx.GlobalString(utils.EthStatsURLFlag.Name)
 	}
+	// 这里可以添加 读取配置文件 形式的 方法
+	// 可以是 如果配置文件不存在就以默认的配置为准 Stat LoadJSON
 
 	utils.SetShhConfig(ctx, stack, &cfg.Shh)
 	utils.SetDashboardConfig(ctx, &cfg.Dashboard)
@@ -152,7 +156,7 @@ func enableWhisper(ctx *cli.Context) bool {
 
 func makeFullNode(ctx *cli.Context) *node.Node {
 	stack, cfg := makeConfigNode(ctx)
-
+	// 初始化以太坊相关的服务
 	utils.RegisterEthService(stack, &cfg.Eth)
 
 	if ctx.GlobalBool(utils.DashboardEnabledFlag.Name) {

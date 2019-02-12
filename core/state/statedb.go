@@ -634,7 +634,6 @@ func (self *StateDB) GetRefund() uint64 {
 // 使用场景：
 // 1.执行交易/合约，进行一次状态转移。
 // 2.给矿工计算奖励后，进行一次状态转移。
-// TODO
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	// dirties中记录的是变更过的账户
 	// 只处理journal中标记为dirty的对象，不处理stateObjectsDirty中的对象
@@ -677,7 +676,6 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // 1.BlockChain验证一个区块的状态树根是否正确：BlockChain.insertChain —>BlockValidator.ValidateState —>stateDB.intermediateRoot。也就是区块插入规范链时，执行完交易后要验证此时本地的状态树树根与发来的区块头中的是否一致
 // 2.Worker递交工作的过程中执行全部交易后，需要得到状态树根来填充区块头的root：worker.CommitNewWork —> Ethash.Finalize —> stateDB.IntermeidateRoot。因为挖矿之前要先执行交易，还要结算挖矿奖励，然后生成最新的状态（ApplyTransaction返回交易凭据）。这时候就需要获得状态树树根，放在区块头中，一起打包用于挖矿。
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
-	// false
 	// 更新状态树
 	s.Finalise(deleteEmptyObjects)
 	return s.trie.Hash()
