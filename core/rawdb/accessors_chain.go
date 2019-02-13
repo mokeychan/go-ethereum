@@ -77,7 +77,9 @@ func WriteHeadHeaderHash(db DatabaseWriter, hash common.Hash) {
 }
 
 // ReadHeadBlockHash retrieves the hash of the current canonical head block.
+// 获取当前规范链的头区块的hash
 func ReadHeadBlockHash(db DatabaseReader) common.Hash {
+	// key是”LastBlock”，value是头区块的hash
 	data, _ := db.Get(headBlockKey)
 	if len(data) == 0 {
 		return common.Hash{}

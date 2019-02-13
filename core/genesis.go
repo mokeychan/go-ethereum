@@ -153,6 +153,7 @@ func (e *GenesisMismatchError) Error() string {
 // error is a *params.ConfigCompatError and the new, unwritten config is returned.
 //
 // The returned chain configuration is never nil.
+// 加载(构造)创始区块
 func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
 	// 如果自定义了创始区块，却没有配置，则返回err
 	if genesis != nil && genesis.Config == nil {

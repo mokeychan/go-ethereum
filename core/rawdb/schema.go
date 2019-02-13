@@ -65,6 +65,11 @@ var (
 
 // TxLookupEntry is a positional metadata to help looking up the data content of
 // a transaction or receipt given only its hash.
+// 在数据库中记录了所有规范链上区块中每一个交易的信息
+// 如果你知道一个交易的hash，这个hash就能在数据库中查找有没有这个查找入口，
+// 如果没有，说明交易没有上链，如果有，就能快速确定这个交易在哪个区块中，已经在区块中的偏移。
+// 存储的数据结构包括3部分内容，这个交易所在的区块的hash（BlockHash）和区块号（BlockIndex）、交易在区块中的偏移（Index）。
+// 在数据库中存储的时候是以这个交易的hash值编码后的结果为key，这个数据结构编码后的结果为value存储的。
 type TxLookupEntry struct {
 	BlockHash  common.Hash
 	BlockIndex uint64
