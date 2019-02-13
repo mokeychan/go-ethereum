@@ -45,15 +45,18 @@ var errGenesisNoConfig = errors.New("genesis has no chain configuration")
 // Genesis specifies the header fields, state of a genesis block. It also defines hard
 // fork switch-over blocks through the chain configuration.
 type Genesis struct {
+	// 这个Config主要是配置chainID以及共识相关（pow和pos），还有一些硬分叉信息，在此就不列出来了
+	// chainID是一个标示，1标示以太坊公网，测试时，建议设置别的
 	Config     *params.ChainConfig `json:"config"`
-	Nonce      uint64              `json:"nonce"`
+	Nonce      uint64              `json:"nonce"` //加入一些账户，以太坊启动后就能直接用这几个账户
 	Timestamp  uint64              `json:"timestamp"`
 	ExtraData  []byte              `json:"extraData"`
 	GasLimit   uint64              `json:"gasLimit"   gencodec:"required"`
 	Difficulty *big.Int            `json:"difficulty" gencodec:"required"`
 	Mixhash    common.Hash         `json:"mixHash"`
 	Coinbase   common.Address      `json:"coinbase"`
-	Alloc      GenesisAlloc        `json:"alloc"      gencodec:"required"`
+	// 一些内置的账户
+	Alloc GenesisAlloc `json:"alloc"      gencodec:"required"`
 
 	// These fields are used for consensus tests. Please don't use them
 	// in actual genesis blocks.
@@ -151,34 +154,46 @@ func (e *GenesisMismatchError) Error() string {
 //
 // The returned chain configuration is never nil.
 func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
+	// 如果自定义了创始区块，却没有配置，则返回err
 	if genesis != nil && genesis.Config == nil {
 		return params.AllEthashProtocolChanges, common.Hash{}, errGenesisNoConfig
 	}
 
 	// Just commit the new block if there is no stored genesis block.
+	// 如果没有存储的genesis块，只需提交新块
 	stored := rawdb.ReadCanonicalHash(db, 0)
 	if (stored == common.Hash{}) {
+		// 如果没有配置genesis
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
+			// 则使用主网的默认配置
 			genesis = DefaultGenesisBlock()
 		} else {
 			log.Info("Writing custom genesis block")
 		}
 		block, err := genesis.Commit(db)
+		// 返回结果，配置、创世块hash
 		return genesis.Config, block.Hash(), err
 	}
 
 	// Check whether the genesis block is already written.
+	// 若是有自定义的genesis，则校验跟库中已有的是否一致
 	if genesis != nil {
+		// 因为创世块的配置文件每次都可以随意改动，该步骤用来检查创世块是否有所变动
+		// ToBlock传入nil会返回一个标准创世块的hash(启动时的配置)
 		hash := genesis.ToBlock(nil).Hash()
+		// 对比两个hash不一致，说明创世区块有改动，返回错误
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
 	}
 
 	// Get the existing chain configuration.
+	// 获取链的配置，注意不是创世块的配置
+	// 根据传入的stored检测要建立什么样的网络，主网、测试网等
 	newcfg := genesis.configOrDefault(stored)
 	storedcfg := rawdb.ReadChainConfig(db, stored)
+	// 如果db中没有对链的配置，则将newcfg配置进去
 	if storedcfg == nil {
 		log.Warn("Found genesis block without chain config")
 		rawdb.WriteChainConfig(db, stored, newcfg)
@@ -187,20 +202,25 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// Special case: don't change the existing config of a non-mainnet chain if no new
 	// config is supplied. These chains would get AllProtocolChanges (and a compat error)
 	// if we just continued here.
+	// 再次做配置，若genesis为空，则创世块的hash值必须是主网的值
 	if genesis == nil && stored != params.MainnetGenesisHash {
 		return storedcfg, stored, nil
 	}
 
 	// Check config compatibility and write the config. Compatibility errors
 	// are returned to the caller unless we're already at block zero.
+	// 检查兼容性
+	// 只有当前是区块0的时候，才能进行下面的操作
 	height := rawdb.ReadHeaderNumber(db, rawdb.ReadHeadHeaderHash(db))
 	if height == nil {
 		return newcfg, stored, fmt.Errorf("missing block number for head header hash")
 	}
 	compatErr := storedcfg.CheckCompatible(newcfg, *height)
+	// 若已经有区块在db，则不能更改配置
 	if compatErr != nil && *height != 0 && compatErr.RewindTo != 0 {
 		return newcfg, stored, compatErr
 	}
+	// 相当于在块高为0时才可以更新链的配置
 	rawdb.WriteChainConfig(db, stored, newcfg)
 	return newcfg, stored, nil
 }
@@ -220,32 +240,40 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 
 // ToBlock creates the genesis block and writes state of a genesis specification
 // to the given database (or discards it if nil).
+// 生成一个创世块，同时将相关信息写入到db中
 func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 	if db == nil {
 		db = ethdb.NewMemDatabase()
 	}
+	// 给零地址的树根创建一个stateDB实例
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(db))
+	// 将内置账户存到statedb中
 	for addr, account := range g.Alloc {
 		statedb.AddBalance(addr, account.Balance)
 		statedb.SetCode(addr, account.Code)
 		statedb.SetNonce(addr, account.Nonce)
 		for key, value := range account.Storage {
+			// 此时数据还在内存中哦
 			statedb.SetState(addr, key, value)
 		}
 	}
+	// 获取变化之后的树根
 	root := statedb.IntermediateRoot(false)
+	// 构造创世区块的区块头
 	head := &types.Header{
 		Number:     new(big.Int).SetUint64(g.Number),
 		Nonce:      types.EncodeNonce(g.Nonce),
 		Time:       new(big.Int).SetUint64(g.Timestamp),
 		ParentHash: g.ParentHash,
+		// 创世区块的ExtraData
 		Extra:      g.ExtraData,
 		GasLimit:   g.GasLimit,
 		GasUsed:    g.GasUsed,
 		Difficulty: g.Difficulty,
-		MixDigest:  g.Mixhash,
-		Coinbase:   g.Coinbase,
-		Root:       root,
+		// 与nonce结合时,证明这个区块执行了足够计算的哈希值
+		MixDigest: g.Mixhash,
+		Coinbase:  g.Coinbase,
+		Root:      root,
 	}
 	if g.GasLimit == 0 {
 		head.GasLimit = params.GenesisGasLimit
@@ -253,19 +281,26 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 	if g.Difficulty == nil {
 		head.Difficulty = params.GenesisDifficulty
 	}
+	// 写入数据库
 	statedb.Commit(false)
 	statedb.Database().TrieDB().Commit(root, true)
 
+	// 返回创世区块
 	return types.NewBlock(head, nil, nil, nil)
 }
 
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
+// 创世块的配置相关记录到rawdb中
+// 对比上面的ToBlock()，会发现有rawdb和statedb两种不同的db操作
+// 后者主要是存储块交易的各种信息，前者可以理解为是对后者的进一步封装，目前认为其主要是存储创世块相关配置信息
 func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+	// 获取创世区块
 	block := g.ToBlock(db)
 	if block.Number().Sign() != 0 {
 		return nil, fmt.Errorf("can't commit genesis block with number > 0")
 	}
+	// 将块信息存储到rawdb中
 	rawdb.WriteTd(db, block.Hash(), block.NumberU64(), g.Difficulty)
 	rawdb.WriteBlock(db, block)
 	rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), nil)
