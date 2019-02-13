@@ -205,10 +205,12 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		if header := bc.GetHeaderByHash(hash); header != nil {
 			// get the canonical block corresponding to the offending header's number
 			// 通过区块号到规范链上查询存不存在这个区块，如果存在则回滚规范链
+			// header.Number 当前最新块
 			headerByNumber := bc.GetHeaderByNumber(header.Number.Uint64())
 			// make sure the headerByNumber (if present) is in our current canonical chain
 			if headerByNumber != nil && headerByNumber.Hash() == header.Hash() {
 				log.Error("Found bad hash, rewinding chain", "number", header.Number, "hash", header.ParentHash)
+				// 一直往上一个块回滚，直到稳定
 				bc.SetHead(header.Number.Uint64() - 1)
 				log.Error("Chain rewind was successful, resuming normal operation")
 			}
@@ -243,7 +245,7 @@ fastBlock是fast同步模式下，完整构建一个区块链时的头区块，�
 */
 func (bc *BlockChain) loadLastState() error {
 	// Restore the last known head block
-	// 获取当前规范链的头区块的hash
+	// 获取当前规范链的头区块的hash(最新块)
 	head := rawdb.ReadHeadBlockHash(bc.db)
 	if head == (common.Hash{}) {
 		// Corrupt or empty database, init from scratch
@@ -261,16 +263,18 @@ func (bc *BlockChain) loadLastState() error {
 		return bc.Reset()
 	}
 	// Make sure the state associated with the block is available
-	// 确保这个区块的状态从数据库中是可获取的
+	// 看当前块的hash和db中记录能否联系上，不能则一直回滚
 	if _, err := state.New(currentBlock.Root(), bc.stateCache); err != nil {
 		// Dangling block without a state associated, init from scratch
 		log.Warn("Head state missing, repairing chain", "number", currentBlock.Number(), "hash", currentBlock.Hash())
+		// repair，会一直回滚，直到能够获取到状态的树
 		if err := bc.repair(&currentBlock); err != nil {
 			return err
 		}
 	}
 	// Everything seems to be fine, set as the head block
 	// 上面的验证都通过，说明这个区块没有问题， 可以赋值给BlockChain的currentBlock
+	// 设置最新块
 	bc.currentBlock.Store(currentBlock)
 
 	// Restore the last known head header
@@ -1156,15 +1160,18 @@ func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 // wrong.
 //
 // After insertion is done, all accumulated events will be fired.
+// insertChain方法会执行区块链插入,并收集事件信息. 因为需要使用defer来处理解锁,所以把这个方法作为一个单独的方法
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	// Sanity check that we have something meaningful to import
 	if len(chain) == 0 {
 		return 0, nil
 	}
 	// Do a sanity check that the provided chain is actually ordered and linked
+	// 做一个完整性检查，提供的链实际上是有序的和相互链接的
 	for i := 1; i < len(chain); i++ {
 		if chain[i].NumberU64() != chain[i-1].NumberU64()+1 || chain[i].ParentHash() != chain[i-1].Hash() {
 			// Chain broke ancestry, log a message (programming error) and skip insertion
+			// 不满足基本规范，直接返回
 			log.Error("Non contiguous block insert", "number", chain[i].Number(), "hash", chain[i].Hash(),
 				"parent", chain[i].ParentHash(), "prevnumber", chain[i-1].Number(), "prevhash", chain[i-1].Hash())
 
@@ -1207,13 +1214,17 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	// A queued approach to delivering events. This is generally
 	// faster than direct delivery and requires much less mutex
 	// acquiring.
+	// 使用队列来处理事件，这效果通常比用互斥锁的机制要快很多
 	var (
-		stats         = insertStats{startTime: mclock.Now()}
+		// 起始时间，以太坊使用mclock.Now()来计算程序执行时间，这个更加精确
+		stats = insertStats{startTime: mclock.Now()}
+		// 事件长度和待加入的块数一致
 		events        = make([]interface{}, 0, len(chain))
 		lastCanon     *types.Block
 		coalescedLogs []*types.Log
 	)
 	// Start the parallel header verifier
+	// 先检测这些块的合法性
 	headers := make([]*types.Header, len(chain))
 	seals := make([]bool, len(chain))
 
