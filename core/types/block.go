@@ -69,18 +69,18 @@ func (n *BlockNonce) UnmarshalText(input []byte) error {
 // Header represents a block header in the Ethereum blockchain.
 // 区块头结构
 type Header struct {
-	ParentHash  common.Hash    `json:"parentHash"       gencodec:"required"` // 父区块hash
-	UncleHash   common.Hash    `json:"sha3Uncles"       gencodec:"required"` // 叔区块hash
+	ParentHash  common.Hash    `json:"parentHash"       gencodec:"required"` // 指向父区块(parentBlock)的指针。除了创世块(Genesis Block)外，每个区块有且只有一个父区块
+	UncleHash   common.Hash    `json:"sha3Uncles"       gencodec:"required"` // Block结构体的成员uncles的RLP哈希值。uncles是一个Header数组，它的存在，颇具匠心
 	Coinbase    common.Address `json:"miner"            gencodec:"required"` // 挖到该块的矿工地址,矿工费和挖矿的奖励地址
-	Root        common.Hash    `json:"stateRoot"        gencodec:"required"` // Merkle树根节点的hash，存储交易的状态
-	TxHash      common.Hash    `json:"transactionsRoot" gencodec:"required"` // 保存该区块中交易Merkle树的根节点的Hash值
-	ReceiptHash common.Hash    `json:"receiptsRoot"     gencodec:"required"` // 一个区块中所包含的交易中的接收者也是以Merkle树的形式进行存储的，该值是该Merkle树根节点的Hash值
-	Bloom       Bloom          `json:"logsBloom"        gencodec:"required"` // 用于索引与搜索的结构
+	Root        common.Hash    `json:"stateRoot"        gencodec:"required"` // Merkle树根节点的hash，存储交易的状态(状态树)
+	TxHash      common.Hash    `json:"transactionsRoot" gencodec:"required"` // 保存该区块中交易Merkle树的根节点的Hash值(交易树)
+	ReceiptHash common.Hash    `json:"receiptsRoot"     gencodec:"required"` // 一个区块中所包含的交易中的接收者也是以Merkle树的形式进行存储的，该值是该Merkle树根节点的Hash值(收据树)
+	Bloom       Bloom          `json:"logsBloom"        gencodec:"required"` // 布隆过滤器，用于索引与搜索的结构，用来快速判断一个参数Log对象是否存在于一组已知的Log集合中。
 	Difficulty  *big.Int       `json:"difficulty"       gencodec:"required"` // 该区块的难度
 	Number      *big.Int       `json:"number"           gencodec:"required"` // 区块高度
 	GasLimit    uint64         `json:"gasLimit"         gencodec:"required"` // gasLimit
 	GasUsed     uint64         `json:"gasUsed"          gencodec:"required"` // gasUsed
-	Time        *big.Int       `json:"timestamp"        gencodec:"required"` // 区块打包时间
+	Time        *big.Int       `json:"timestamp"        gencodec:"required"` // 区块打包时间 一般来说，要么等于parentBlock.Time + 15s，要么等于当前系统时间
 	Extra       []byte         `json:"extraData"        gencodec:"required"` // 区块相关的附加信息
 	MixDigest   common.Hash    `json:"mixHash"`                              // 该哈希值与Nonce值一起能够证明在该区块上已经进行了足够的计算（用于验证该区块挖矿成功与否的Hash值
 	Nonce       BlockNonce     `json:"nonce"`                                // 该哈希值与MixDigest值一起能够证明在该区块上已经进行了足够的计算（用于验证该区块挖矿成功与否的Hash值
@@ -128,9 +128,9 @@ type Body struct {
 // Block represents an entire block in the Ethereum blockchain.
 // 区块的结构
 type Block struct {
-	header       *Header      // 包含的区块头信息
-	uncles       []*Header    // 包含的叔块信息
-	transactions Transactions // 包含的交易数组
+	header       *Header      // 区块头信息
+	uncles       []*Header    // 叔块信息
+	transactions Transactions // 交易数组
 
 	// caches
 	hash atomic.Value // 区块的hash缓存
@@ -183,11 +183,13 @@ type storageblock struct {
 // The values of TxHash, UncleHash, ReceiptHash and Bloom in header
 // are ignored and set to values derived from the given txs, uncles
 // and receipts.
-// 创建一个新区块
+// NewBlock() 创建一个新块
 func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*Receipt) *Block {
+	// 拷贝一个header,并且设置挖矿难度值为0
 	b := &Block{header: CopyHeader(header), td: new(big.Int)}
 
 	// TODO: panic if len(txs) != len(receipts)
+	// 设置交易Merkle树的hash, 只要有新的交易就会改变hash值
 	if len(txs) == 0 {
 		b.header.TxHash = EmptyRootHash
 	} else {
@@ -196,6 +198,7 @@ func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*
 		copy(b.transactions, txs)
 	}
 
+	// 设置收据Merkle树的hash, 只要有新的收据就会改变hash值, 并且构造一个布隆过滤器
 	if len(receipts) == 0 {
 		b.header.ReceiptHash = EmptyRootHash
 	} else {
@@ -203,6 +206,7 @@ func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*
 		b.header.Bloom = CreateBloom(receipts)
 	}
 
+	// 设置所有叔块的rlp编码之后的hash, 拷贝所有的叔块
 	if len(uncles) == 0 {
 		b.header.UncleHash = EmptyUncleHash
 	} else {
@@ -219,6 +223,7 @@ func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*
 // NewBlockWithHeader creates a block with the given header data. The
 // header data is copied, changes to header and to the field values
 // will not affect the block.
+// 只传入Header的信息构造区块
 func NewBlockWithHeader(header *Header) *Block {
 	return &Block{header: CopyHeader(header)}
 }
@@ -245,6 +250,7 @@ func CopyHeader(h *Header) *Header {
 
 // DecodeRLP decodes the Ethereum
 func (b *Block) DecodeRLP(s *rlp.Stream) error {
+	// extblock结构体是用来存储解析结果的，其中包括header、uncles、transacitions
 	var eb extblock
 	_, size, _ := s.Kind()
 	if err := s.Decode(&eb); err != nil {
@@ -288,12 +294,14 @@ func (b *Block) Transaction(hash common.Hash) *Transaction {
 	return nil
 }
 
+// 返回当前块所在高度（*big.Int形式返回）
 func (b *Block) Number() *big.Int     { return new(big.Int).Set(b.header.Number) }
 func (b *Block) GasLimit() uint64     { return b.header.GasLimit }
 func (b *Block) GasUsed() uint64      { return b.header.GasUsed }
 func (b *Block) Difficulty() *big.Int { return new(big.Int).Set(b.header.Difficulty) }
 func (b *Block) Time() *big.Int       { return new(big.Int).Set(b.header.Time) }
 
+// 返回当前块所在高度（uint64形式返回）
 func (b *Block) NumberU64() uint64        { return b.header.Number.Uint64() }
 func (b *Block) MixDigest() common.Hash   { return b.header.MixDigest }
 func (b *Block) Nonce() uint64            { return binary.BigEndian.Uint64(b.header.Nonce[:]) }
@@ -303,8 +311,10 @@ func (b *Block) Root() common.Hash        { return b.header.Root }
 func (b *Block) ParentHash() common.Hash  { return b.header.ParentHash }
 func (b *Block) TxHash() common.Hash      { return b.header.TxHash }
 func (b *Block) ReceiptHash() common.Hash { return b.header.ReceiptHash }
-func (b *Block) UncleHash() common.Hash   { return b.header.UncleHash }
-func (b *Block) Extra() []byte            { return common.CopyBytes(b.header.Extra) }
+
+// 叔块的hash，这是由两个叔块数据生成的
+func (b *Block) UncleHash() common.Hash { return b.header.UncleHash }
+func (b *Block) Extra() []byte          { return common.CopyBytes(b.header.Extra) }
 
 func (b *Block) Header() *Header { return CopyHeader(b.header) }
 
@@ -375,6 +385,7 @@ type Blocks []*Block
 
 type BlockBy func(b1, b2 *Block) bool
 
+// 总的来说 区块的排序是按照块高来排序的
 func (self BlockBy) Sort(blocks Blocks) {
 	bs := blockSorter{
 		blocks: blocks,
