@@ -551,6 +551,8 @@ func (c *Clique) Prepare(chain consensus.ChainReader, header *types.Header) erro
 	header.Difficulty = CalcDifficulty(snap, c.signer)
 
 	// Ensure the extra data has all it's components
+	// header.Extra[0:31] to store block's version info etc. and right pad with 0x00;
+	// header.Extra[32:] to store block's sign of producer, the length of sign is 65.
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
 	}
