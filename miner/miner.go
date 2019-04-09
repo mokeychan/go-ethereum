@@ -60,11 +60,14 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 		mux:    mux,
 		engine: engine,
 		exitCh: make(chan struct{}),
-		// 创建真正挖矿的苦命仔
+		// 创建真正挖矿的苦命仔worker
 		worker:   newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
 		canStart: 1,
 	}
-	// 注意这个方法
+	// 启动一个线程执行update，首先订阅了downloader的相关的几个事件。
+	/*可以看到如果当前处于 区块的同步中，则挖矿的操作需要停止，
+	直到同步操作结束（同步成功或是失败），
+	如果原来已经执行了挖矿操作的，则继续开启挖矿操作*/
 	go miner.update()
 
 	return miner
@@ -75,6 +78,8 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 // the loop is exited. This to prevent a major security vuln where external parties can DOS you with blocks
 // and halt your mining operation for as long as the DOS continues.
 // 监听downloader事件，控制着canStart和shouldStart这两个开关，用于抵挡DOS攻击
+// 收到Downloader的StartEvent时，意味者此时本节点正在从其他节点下载新区块，这时miner会立即停止进行中的挖掘工作，并继续监听；如果收到DoneEvent或FailEvent时，意味本节点的下载任务已结束-无论下载成功或失败-此时都可以开始挖掘新区块，并且此时会退出Downloader事件的监听。
+// 也就是说，只要接收到来自其他节点的区块，本节点就会自动停止当前区块的挖掘，转向下一个区块。
 func (self *Miner) update() {
 	// 注册下载开始事件，下载结束事件，下载失败事件
 	events := self.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})

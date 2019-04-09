@@ -135,9 +135,9 @@ type worker struct {
 	txsCh        chan core.NewTxsEvent    // 交易池更新事件
 	txsSub       event.Subscription       // 交易订阅
 	chainHeadCh  chan core.ChainHeadEvent // 区块头更新事件
-	chainHeadSub event.Subscription
+	chainHeadSub event.Subscription       // 区块头订阅
 	chainSideCh  chan core.ChainSideEvent // 区块链分叉事件
-	chainSideSub event.Subscription
+	chainSideSub event.Subscription       // 链分叉订阅
 
 	// Channels
 	newWorkCh          chan *newWorkReq
@@ -193,10 +193,12 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		remoteUncles: make(map[common.Hash]*types.Block),
 		unconfirmed:  newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
 		pendingTasks: make(map[common.Hash]*task),
-		// 建立一个4096缓冲大小的新交易channel，用于接收新的交易事件
-		txsCh:              make(chan core.NewTxsEvent, txChanSize),
-		chainHeadCh:        make(chan core.ChainHeadEvent, chainHeadChanSize), // ChainHeadEvent事件，代表已经有一个块作为链头，则会继续挖新的区块。
-		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize), // ChainSideEvent事件，代表有一个新块作为链的旁支，可能称为叔块。
+		// NewTxsEvent事件，代表有新的交易被放入了交易池，这时如果worker没有处于挖掘中，那么就去执行这个tx，并把它收纳进Work.txs数组，为下次挖掘新区块备用。
+		txsCh: make(chan core.NewTxsEvent, txChanSize),
+		// ChainHeadEvent事件，代表已经有一个块作为链头，这时worker的回应是立即开始准备挖掘下一个新区块。
+		chainHeadCh: make(chan core.ChainHeadEvent, chainHeadChanSize),
+		// ChainSideEvent事件，代表有一个新块作为链的旁支，worker会把这个区块收纳进possibleUncles[]数组，作为下一个挖掘新区块可能的Uncle之一。
+		chainSideCh:        make(chan core.ChainSideEvent, chainSideChanSize),
 		newWorkCh:          make(chan *newWorkReq),
 		taskCh:             make(chan *task),
 		resultCh:           make(chan *types.Block, resultQueueSize),
@@ -218,13 +220,18 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		recommit = minRecommitInterval
 	}
 
-	// 注意这四个协程，如何监听订阅的事件
-	// go worker.mainLoop()
-	// newWorkLoop 是一个一直监听 startCh 中是否有挖矿信号
-	// (startCh的信号由 start函数放置进去的，见下面的start方法)
+	// 启动这四个协程。注意这四个协程，如何监听订阅的事件
+
+	// 挖矿主循环，这里面又会监听几个事件，newWorkCh代表一个新的区块需要提交挖矿；chainSideCh代表发现了一个叔区块，我们需要视情况而定加入到当前区块中，重新开始挖矿（一个区块最多包含两个叔区块）；
+	// txsCh代表接收到一个新的交易，如果没有开始挖掘，则执行这个交易，加入当前区块中（上一部分中交易执行的入口就是从这里发现的）。
 	go worker.newWorkLoop(recommit)
+	// 这里主要是work主线程，负责提交任务。这里主要涉及到三个比较重要的函数，分别是commit()、recalcRecommit()、clearPending()。Commit用于提交任务，发送newWorkReq到上一步中的newWorkCh通；，recalcRecommit是根据反馈计算一个等待时间；clearPending是清除当前在等待的任务。
+	// 搞清楚这几个函数的作用之后，这里面监听的事件就很容易明白了，概括一下就是要么等待，要么就是清除队列准备提交（相信读者经过上面的学习这里应该很容易看懂，篇幅有限，笔者不再赘述）。
 	go worker.mainLoop()
+	// 结果处理，用于处理封装好之后的区块。通过resultCh接收到封装好的区块之后，做一个简单的验证（可能由于resubmit导致区块重复），构造好logs和event，发送相关事件。最后将这个块插入到unconfirmed链中。
+	// 注意，这里第一次出现了unconfirmed这个概念，这相当于未确认的块，所有挖出来或者接收的区块都会先插入到这个地方，后续遇到这个我们再详细讲。
 	go worker.resultLoop()
+	// 这是负责连接worker和agent的地方，newWorkLoop中的commit函数会发送taskCh到taskLoop中，由taskLoop调用agent进行seal。也就是说，taskLoop负责把worker的任务推送到具体的engine。
 	go worker.taskLoop()
 
 	// Submit first work to initialize pending state.

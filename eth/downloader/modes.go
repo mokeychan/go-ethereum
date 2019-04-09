@@ -22,11 +22,12 @@ import "fmt"
 type SyncMode int
 
 const (
-	FullSync  SyncMode = iota // Synchronise the entire blockchain history from full blocks
-	FastSync                  // Quickly download the headers, full sync only at the chain head
-	LightSync                 // Download only the headers and terminate afterwards
+	FullSync  SyncMode = iota // Synchronise the entire blockchain history from full blocks 0 同步完整的区块信息
+	FastSync                  // Quickly download the headers, full sync only at the chain head 1 快速同步header，然后再根据header同步全部内容
+	LightSync                 // Download only the headers and terminate afterwards 2 只下载header并在之后终止
 )
 
+// 合法性的校验,当传入的0<=mode<=2返回true
 func (mode SyncMode) IsValid() bool {
 	return mode >= FullSync && mode <= LightSync
 }

@@ -116,6 +116,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		quitSync:    make(chan struct{}),
 	}
 	// Figure out whether to allow fast sync or not
+	// 当同步模式为fast并最新区块的高度大于0（已经同步过一部分数据，即第二次启动）时，程序自动将同步模式转变为full，并打印警告信息。
 	if mode == downloader.FastSync && blockchain.CurrentBlock().NumberU64() > 0 {
 		log.Warn("Blockchain not empty, fast sync disabled")
 		mode = downloader.FullSync
