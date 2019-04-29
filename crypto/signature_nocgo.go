@@ -29,6 +29,7 @@ import (
 )
 
 // Ecrecover returns the uncompressed public key that created the given signature.
+// 通过消息的哈希和签名恢复公钥
 func Ecrecover(hash, sig []byte) ([]byte, error) {
 	pub, err := SigToPub(hash, sig)
 	if err != nil {
@@ -44,7 +45,7 @@ func SigToPub(hash, sig []byte) (*ecdsa.PublicKey, error) {
 	btcsig := make([]byte, 65)
 	btcsig[0] = sig[64] + 27
 	copy(btcsig[1:], sig)
-
+	// 真实的实现调用了一个第三方的比特币的go项目，源码在vendor/github.com/bitcsuite/bitcd
 	pub, _, err := btcec.RecoverCompact(btcec.S256(), btcsig, hash)
 	return (*ecdsa.PublicKey)(pub), err
 }
@@ -57,6 +58,7 @@ func SigToPub(hash, sig []byte) (*ecdsa.PublicKey, error) {
 // solution is to hash any input before calculating the signature.
 //
 // The produced signature is in the [R || S || V] format where V is 0 or 1.
+// 通过哈希和私钥计算ECDSA签名
 func Sign(hash []byte, prv *ecdsa.PrivateKey) ([]byte, error) {
 	if len(hash) != 32 {
 		return nil, fmt.Errorf("hash is required to be exactly 32 bytes (%d)", len(hash))
@@ -78,6 +80,7 @@ func Sign(hash []byte, prv *ecdsa.PrivateKey) ([]byte, error) {
 // VerifySignature checks that the given public key created signature over hash.
 // The public key should be in compressed (33 bytes) or uncompressed (65 bytes) format.
 // The signature should have the 64 byte [R || S] format.
+// 通过公钥，哈希校验签名
 func VerifySignature(pubkey, hash, signature []byte) bool {
 	if len(signature) != 64 {
 		return false
@@ -95,6 +98,7 @@ func VerifySignature(pubkey, hash, signature []byte) bool {
 }
 
 // DecompressPubkey parses a public key in the 33-byte compressed format.
+// 将33字节的公钥解压成65字节公钥
 func DecompressPubkey(pubkey []byte) (*ecdsa.PublicKey, error) {
 	if len(pubkey) != 33 {
 		return nil, errors.New("invalid compressed public key length")
@@ -107,6 +111,7 @@ func DecompressPubkey(pubkey []byte) (*ecdsa.PublicKey, error) {
 }
 
 // CompressPubkey encodes a public key to the 33-byte compressed format.
+// 将65字节非压缩公钥压缩称33字节压缩公钥
 func CompressPubkey(pubkey *ecdsa.PublicKey) []byte {
 	return (*btcec.PublicKey)(pubkey).SerializeCompressed()
 }
